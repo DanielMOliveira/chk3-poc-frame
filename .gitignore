@@ -4,3 +4,5 @@ obj/
 TestResults/
 *.user
 .vs/
+node_modules/
+package-lock.json

@@ -8,21 +8,38 @@ POC executável do **Frame V0 v7** do MCN Checkout 3.0, passos **1 a 14** de
 Stack: .NET 10 (ASP.NET Core minimal APIs), Postgres 17, Npgsql + Dapper, docker compose.
 Sem Front Door, APIM, Identity Server, Firewall, VPN e Worker.
 
-## Como rodar
+## Pré-requisitos
+- **Docker** com **compose v2** (`docker compose version`).
+  - Linux: Docker Engine.
+  - macOS e Windows: Docker Desktop. No Windows, rode os scripts no WSL2 ou no Git Bash.
+- Para os scripts: `bash`, `curl`, `openssl` e `jq`.
+  - `init-env.sh` funciona sem `openssl`, usando `/dev/urandom`.
+  - `test.sh` só precisa de Docker.
+- Opcional, para o E2E no navegador: Node 18+ e Google Chrome.
+- Não precisa de SDK .NET no host. O build e os testes rodam nos containers oficiais (`mcr.microsoft.com/dotnet/sdk:10.0`).
 
-Requisitos: Docker com compose v2. Para o smoke: `bash`, `curl`, `openssl`, `jq`.
+## Quickstart (clone limpo)
 
 ```bash
-cp .env.example .env
-# troque TODOS os segredos do .env, por exemplo:
-#   openssl rand -base64 48
+git clone https://github.com/DanielMOliveira/chk3-poc-frame.git
+cd chk3-poc-frame
+./scripts/init-env.sh             # cria o .env com segredos aleatórios (nunca é commitado)
 docker compose up -d --build
-./scripts/smoke.sh            # smoke ponta a ponta: aprova, recusa e timeout
-./scripts/test.sh             # testes (unitários + integração), no container do SDK .NET 10
-# ou, com o SDK .NET 10 instalado: dotnet test tests/Chk3.Tests
+./scripts/smoke.sh                # smoke ponta a ponta: aprova, recusa e timeout
+./scripts/test.sh                 # testes xUnit num container do SDK, dentro da rede do compose
 ```
 
-Demo no navegador: abrir **http://localhost:8080** (canal fake), clicar em Pagar.
+Demo no navegador: abrir `http://localhost:8080` (ou a `CANAL_HOST_PORT`/`CANAL_PUBLIC_ORIGIN` escolhida) e clicar em Pagar.
+
+Portas diferentes, por exemplo se a 8080 estiver ocupada:
+
+```bash
+CANAL_HOST_PORT=19180 OPCOES_HOST_PORT=19181 CARTAO_HOST_PORT=19182 INTEGRATION_HOST_PORT=19183 \
+  ./scripts/init-env.sh --force
+docker compose up -d --build
+```
+
+Também dá para editar as portas direto no `.env`. As origens (CSP, `frame-ancestors`, `frameUrl`) acompanham as portas automaticamente quando as variáveis `*_PUBLIC_ORIGIN` ficam vazias.
 
 | Cartão de teste       | Resultado no mock                         |
 |-----------------------|-------------------------------------------|
@@ -32,23 +49,77 @@ Demo no navegador: abrir **http://localhost:8080** (canal fake), clicar em Pagar
 | 5105 1051 0510 5100   | recusa (mastercard)                       |
 | 4000 0000 0000 0119   | não responde no prazo, vira indeterminado |
 
-Validade futura, CVV `123`. Qualquer outro PAN, mesmo com Luhn válido, é recusado (allowlist de teste
-na API Autorização e no mock).
+Use validade futura e CVV `123`. Qualquer outro PAN é recusado, mesmo com Luhn válido. A API Autorização e o mock só aceitam essa lista de teste.
 
-E2E opcional em navegador real (Chrome headless, valida CSP, `frame-ancestors`, iframe aninhado e
-`postMessage`): `npm i playwright-core && node scripts/browser-e2e.mjs`.
+E2E opcional em navegador real: `npm install && npm run e2e`.
+- Usa o Google Chrome instalado. Para outro binário, defina `CHROME=/caminho`.
+- Valida CSP, `frame-ancestors`, iframe aninhado e `postMessage`.
 
-Parar: `docker compose down` (mantém a base) ou `docker compose down -v` (apaga a base).
+Parar:
+- `docker compose down` mantém a base;
+- `docker compose down -v` apaga a base.
+
+## Variáveis do `.env`
+
+| Variável | Padrão | Para que serve |
+|---|---|---|
+| `POSTGRES_USER`, `POSTGRES_DB` | `chk3`, `chk3poc` | Base Postgres |
+| `POSTGRES_PASSWORD` | gerado | Senha da base (a base não tem porta publicada) |
+| `CHANNEL_JWT_SECRET` | gerado | Segredo HS256 do token do canal (mínimo 32 bytes) |
+| `CHANNEL_JWT_ISSUER` | `chk3-poc-issuer` | `iss` esperado no token do canal |
+| `INTERNAL_API_KEY` | gerado | Chave dos endpoints internos (no lugar da Managed Identity) |
+| `SNAPSHOT_SIGNING_KEY` | gerado | HMAC do snapshot de bandeiras (mínimo 32 bytes) |
+| `GATEWAY_API_KEY` | gerado | Chave do mock do Gateway |
+| `HOST_BIND` | `127.0.0.1` | Interface das portas publicadas. `127.0.0.1` = só a máquina. `0.0.0.0` = todas as interfaces (rede local, sem TLS: evitar) |
+| `CANAL_HOST_PORT` | `8080` | Porta do canal fake no host |
+| `OPCOES_HOST_PORT` | `8081` | Porta da Tela de opções no host |
+| `CARTAO_HOST_PORT` | `8082` | Porta da Web App Cartão no host |
+| `INTEGRATION_HOST_PORT` | `8083` | Porta da Integration API (`POST /sessions`) no host |
+| `CANAL_PUBLIC_ORIGIN` | `http://localhost:${CANAL_HOST_PORT}` | Origem que o navegador vê. Entra na CSP e no `postMessage` |
+| `OPCOES_PUBLIC_ORIGIN` | `http://localhost:${OPCOES_HOST_PORT}` | Origem da Tela. Entra na `frameUrl`, na CSP e no `postMessage` |
+| `CARTAO_PUBLIC_ORIGIN` | `http://localhost:${CARTAO_HOST_PORT}` | Origem do endpoint pay. Entra no `frame-src`/`form-action` da Tela |
+| `GATEWAY_TIMEOUT_MS` | `3000` | Timeout da API Autorização para o Gateway (12b) |
+| `GATEWAY_MOCK_TIMEOUT_DELAY_MS` | `10000` | Atraso do cartão de timeout no mock |
+
+Regra: com as origens vazias ou comentadas, elas derivam das portas. Atrás de proxy ou túnel com domínio, defina as três origens com o endereço público, sem barra no fim. O `docker-compose.yml`, o `smoke.sh`, o `browser-e2e.mjs` e os testes usam a mesma regra.
+
+## VPS atrás de túnel HTTPS (ex.: Cloudflare Tunnel)
+
+Só com o `.env`, sem `docker-compose.override.yml`:
+
+```dotenv
+HOST_BIND=127.0.0.1
+CANAL_HOST_PORT=18180
+OPCOES_HOST_PORT=18181
+CARTAO_HOST_PORT=18182
+INTEGRATION_HOST_PORT=18183
+CANAL_PUBLIC_ORIGIN=https://canal.seu-dominio
+OPCOES_PUBLIC_ORIGIN=https://checkout.seu-dominio
+CARTAO_PUBLIC_ORIGIN=https://pay.seu-dominio
+```
+
+O túnel publica cada hostname no serviço local correspondente:
+- `canal.seu-dominio` → `http://127.0.0.1:18180`
+- `checkout.seu-dominio` → `http://127.0.0.1:18181`
+- `pay.seu-dominio` → `http://127.0.0.1:18182`
+
+A porta 18183 (`/sessions`) só precisa ir para o túnel se um canal externo for chamar a API. O canal fake a chama pela rede interna do compose.
+
+Use três hostnames distintos. Opções e Cartão precisam ser origens diferentes, e o túnel não pode cachear essas páginas, que já respondem `no-store`.
+
+Na VPS:
+- `./scripts/smoke.sh` usa as origens HTTPS e chama a Integration em `http://127.0.0.1:18183`;
+- `./scripts/test.sh` roda dentro da rede do compose.
 
 ## Arquitetura e mapeamento para o v7
 
 | Serviço compose | Componente v7 | Porta host | Rede(s) | Passos |
 |---|---|---|---|---|
-| `canal` | Canal Workflow (fake) | 8080 | fora | 1, 4 (chama `POST /sessions` do servidor e embute o iframe) |
-| `opcoes` | Tela de opções (fora da CDE) | 8081 | fora | 5, 6, 7, 14 |
-| `cartao` | Web App Cartão (CDE, endpoint pay) | 8082 | cde | 8, 9, 14 |
+| `canal` | Canal Workflow (fake) | `CANAL_HOST_PORT` (8080) | fora | 1, 4 (chama `POST /sessions` do servidor e embute o iframe) |
+| `opcoes` | Tela de opções (fora da CDE) | `OPCOES_HOST_PORT` (8081) | fora | 5, 6, 7, 14 |
+| `cartao` | Web App Cartão (CDE, endpoint pay) | `CARTAO_HOST_PORT` (8082) | cde | 8, 9, 14 |
 | `autorizacao` | API Autorização (CDE, sem banco) | — | cde, vpn | 9 a 13 |
-| `integration` | Integration API | 8083 (só `/sessions`) | fora, cde, dados | 2, 3, 4, 6, 7, 8, 10, 13 |
+| `integration` | Integration API | `INTEGRATION_HOST_PORT` (8083, só `/sessions`) | fora, cde, dados | 2, 3, 4, 6, 7, 8, 10, 13 |
 | `gateway-mock` | Gateway MCN | — | vpn (internal) | 11, 12 |
 | `postgres` | SQL | — | dados (internal) | 3, 6, 7, 10, 13 |
 
@@ -103,7 +174,7 @@ Fluxo:
 - **Redes**:
   - `vpn` (API Autorização ↔ mock) e `dados` (Integration ↔ Postgres) são `internal`;
   - Postgres sem porta publicada;
-  - portas publicadas só em `127.0.0.1` por padrão.
+  - portas publicadas só em `127.0.0.1` por padrão (`HOST_BIND`).
 - **Containers**: usuário não root, `read_only`, `no-new-privileges`.
 - **Integration**: rate limit por canal (120/min) e limite de tamanho de corpo.
 
@@ -162,9 +233,9 @@ src/Autorizacao   API Autorização
 src/GatewayMock   mock do Gateway
 src/CanalFake     canal fake
 tests/Chk3.Tests  testes
-scripts/          smoke.sh, test.sh, browser-e2e.mjs
+scripts/          init-env.sh, smoke.sh, test.sh, lib-env.sh, browser-e2e.mjs
 ```
 
 ## Deploy
 Nada é publicado por este repo. O deploy na VPS será feito via git, coordenado com o agente Monitor Casa:
-`.env` próprio da VPS (nunca versionado), origens HTTPS no `.env` e proxy TLS na frente das portas 8080–8083.
+`.env` próprio da VPS (nunca versionado, gerado com `init-env.sh`), portas e origens HTTPS no `.env` (ver seção da VPS).

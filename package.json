@@ -1,0 +1,8 @@
+{
+  "name": "chk3-poc-frame-e2e",
+  "private": true,
+  "description": "E2E opcional em navegador real (Chrome) para o POC CHK3 frame v7",
+  "type": "module",
+  "scripts": { "e2e": "node scripts/browser-e2e.mjs" },
+  "devDependencies": { "playwright-core": "^1.49.0" }
+}
