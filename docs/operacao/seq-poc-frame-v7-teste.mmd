@@ -1,0 +1,98 @@
+sequenceDiagram
+  actor P as Navegador
+  participant WF as Canal Workflow - canal fake
+  participant OP as Tela de opcoes - opcoes
+  participant WC as Web App Cartao - cartao
+  participant AUT as API Autorizacao - autorizacao
+  participant API as Integration API - integration
+  participant DB as SQL - postgres
+  participant GW as Gateway MCN - gateway-mock
+
+  Note over P,GW: POC Frame v7 como roda na VPS. Teste aprovado transactionId 01a21473-ba9f-776d-95c2-a381ed0d3519, PED-1001, 249,90 BRL, visa 1x. Fora do POC - Identity Server, Front Door WAF, APIM, Firewall HubPCI e Worker
+
+  P->>WF: 1 POST checkout do canal fake, pedido e valor, sem cartao
+  Note over WF: Desvio 0 - o canal fake assina o proprio JWT HS256, sem Identity Server
+  WF->>API: 1 POST sessions com Bearer JWT, Idempotency-Key e X-Correlation-Id gerado pelo canal
+  Note over WF,API: Desvio 1 e 2 - sem Front Door e APIM. JWT, escopo e rate limit 120 por min sao validados na propria Integration
+  API->>API: 2 Canal do sub do JWT ativo no cadastro, valida pedido, valor, camposAdicionais e parcelas
+  API->>DB: 3 Le cadastro do canal - TTL, bandeiras e parcelas max
+  API->>DB: 3c INSERT ON CONFLICT por canal e chave com fingerprint, sessao com snapshot do cadastro
+  API->>DB: 3c Grava so o hash da credencial de pagamento, mesma transacao SQL
+  Note over API,DB: 2a e 2b 400, 3a 409 e 3b nova credencial existem no codigo e nos testes, nao neste teste. 3b mantem credenciais antigas ate o TTL
+  API-->>WF: 4 201 transactionId e URL da tela com a credencial de pagamento no fragment
+  WF-->>P: 4 Pagina do canal com iframe da tela de opcoes e allow=payment
+  Note over WF,API: Log - canal passo=1-4 e integration passo=2-4 3c_criada. Correlation passa a ser o transactionId
+
+  P->>OP: 5 GET da tela de opcoes, credencial so no fragment
+  P->>P: 5 JS le o fragment, guarda em memoria e limpa a URL
+  Note over P,OP: Passo 5 so no navegador, sem linha de log. Desvio - F5 dentro do iframe perde a credencial, so o canal reabre
+  P->>OP: 6 POST api session com X-Payment-Credential
+  OP->>API: 6 Validate interno com X-Internal-Key, X-Payment-Credential e X-Correlation-Id
+  API->>DB: 6 Valida sem consumir - hash, TTL, canal ativo, estado Criada e sem tentativa
+  alt 6a Credencial invalida, expirada ou sessao com tentativa
+    API-->>OP: 6a 401 sem detalhes
+    OP-->>P: 6a Tela de erro, o canal pede novo frame
+  else 6b Credencial valida
+    API-->>OP: 6b Meios, bandeiras, marca, parcelas max e resumo para exibicao
+    OP-->>P: 6b Tela de opcoes, Pix e Boleto como Em breve
+  end
+  Note over P,OP: Desvio - o navegador envia o transactionId como X-Correlation-Id a partir do passo 7
+  P->>OP: 7 POST api typing-credential com X-Payment-Credential e X-Correlation-Id
+  OP->>API: 7 Revalida a credencial de pagamento e pede a credencial de digitacao
+  API->>DB: 7 Grava hash da credencial de digitacao, expira com a sessao
+  API-->>OP: 7 Credencial de digitacao e snapshot assinado HMAC
+  OP-->>P: 7 Credencial de digitacao, abre o iframe filho do cartao
+  Note over P,OP: Desvio - as parcelas sao escolhidas no iframe do cartao e nao no passo 7
+
+  P->>WC: 8 POST form digitacao com credencial de digitacao e cid
+  WC->>API: 8 Validate interno com X-Internal-Key, X-Typing-Credential e X-Correlation-Id
+  API->>DB: 8 Valida sem consumir
+  API-->>WC: 8 Snapshot assinado e resumo
+  WC-->>P: 8 Campos do cartao, credencial so em memoria, sem cookie
+  P->>P: 8 Antifraude fake gera deviceSessionId opcional
+
+  rect rgb(255, 228, 228)
+    Note over P,AUT: Trecho com PAN, passo 9, sem PAN em log, disco ou fila
+    P->>P: 9 UX Luhn e validade
+    P->>WC: 9 POST api authorize com X-Typing-Credential e X-Correlation-Id. Cartao, parcelas, snapshot e deviceSessionId, nunca valor
+    WC->>AUT: 9 POST authorize com X-Internal-Key, X-Typing-Credential e X-Correlation-Id
+    AUT->>AUT: 9 Assinatura e expiracao do snapshot, Luhn, validade, CVV, bandeira, parcelas e PAN de teste
+  end
+  alt 9a Cartao invalido, bandeira nao aceita ou snapshot invalido
+    AUT-->>WC: 9a 422 sem dado do cartao e sem tentativa
+    WC-->>P: 9a Pede correcao, limite de 5 falhas por credencial
+  else 9b Cartao valido
+    AUT->>API: 10 POST attempts com X-Typing-Credential e X-Correlation-Id. Bandeira e parcelas, sem PAN
+    API->>DB: 10 Transacao com FOR UPDATE - revalida sessao, bandeira no snapshot e parcelas
+    alt 10a Sessao invalida, bandeira ou parcelas invalidas
+      API-->>AUT: 10a 422 recusa sem envio ao gateway
+      AUT->>AUT: 10a Descarta PAN
+    else 10b Tentativa ja registrada
+      API-->>AUT: 10b 409 estado conhecido sem novo envio
+      AUT->>AUT: 10b Descarta PAN
+    else 10c Nova tentativa
+      API->>DB: 10c Tentativa envio_iniciado e estado AutorizacaoSolicitada com localRef
+      API-->>AUT: 10c 201 valor, moeda, parcelas, pedido e localRef do servidor
+      rect rgb(255, 228, 228)
+        Note over AUT,GW: Desvio - contrato do gateway mock inventado. Rede docker vpn direta, sem Firewall e sem VPN real
+        AUT->>GW: 11 POST poc v1 authorize com X-Gateway-Key e X-Correlation-Id. localRef, valor do servidor, PAN e deviceSessionId
+        alt 12a Aprovado - teste rastreado
+          GW-->>AUT: 12a 200 approved codigo 00
+        else 12a Recusado
+          GW-->>AUT: 12a 200 declined codigo 05
+        else 12b Timeout de 3 s
+          AUT->>AUT: 12b Indeterminada, sem reenvio automatico
+        end
+        AUT->>AUT: 12 Descarta PAN da memoria
+      end
+      AUT->>API: 13 POST attempts localRef result com X-Correlation-Id, sem PAN, ate 3 tentativas
+      API->>DB: 13 Transacao atomica - tentativa resultado_registrado, estado Autorizada Recusada ou Indeterminada e outbox
+      API-->>AUT: 13 Estado registrado
+    end
+    AUT-->>WC: 14 Status e transactionId
+    WC-->>P: 14 Resultado, recusa ou indeterminado
+    P->>P: 14 postMessage cartao, tela e canal, origem restrita
+  end
+  Note over P,OP: Passo 14 so no navegador. No servidor fica a linha cartao passo=9-14. Desvio - o frame fecha apos qualquer tentativa
+  Note over P,API: Retorno do frame nao prova pagamento final
+  Note over API,GW: Passos 15 e 16 fora do escopo. Outbox fica com delivered_at nulo, sem Worker e sem webhook
