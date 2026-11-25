@@ -1,9 +1,11 @@
 # Operação: containers, logs e rastreio de uma transação (POC CHK3 frame v7)
 
 Fontes: `docker-compose.yml`, o código em `src/` e `src/Shared/Trace.cs`.
-Os comandos e os exemplos foram executados na VPS, no diretório do app, em 25/11/2026. As transações foram:
-- três feitas no navegador (E2E pelo túnel SSH): aprovada, recusada e indeterminada;
-- três do `scripts/logs-check.sh`.
+Os comandos e os exemplos foram executados na VPS, no diretório do app, em 25/11/2026.
+- Exemplos capturados no commit `37b3f18`. O `189e03d` só deixou legível o texto do escopo; os comandos foram testados de novo nele.
+- As transações foram:
+  - três feitas no navegador (E2E pelo túnel SSH): aprovada, recusada e indeterminada;
+  - três do `scripts/logs-check.sh`.
 
 O `Timestamp` dos logs e os horários do Postgres estão em UTC. Em novembro, Lisboa também está em UTC+0.
 
