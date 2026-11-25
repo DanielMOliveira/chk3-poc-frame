@@ -1,11 +1,26 @@
 // E2E opcional no navegador real (Chrome headless): canal -> iframe Tela de opções -> iframe Cartão.
 // Valida CSP/frame-ancestors, fragment limpo, iframe aninhado e postMessage (passo 14).
-// Uso: npm i playwright-core && CHROME=/usr/bin/google-chrome node scripts/browser-e2e.mjs
+// Uso: npm i playwright-core && node scripts/browser-e2e.mjs
+//   Usa o Google Chrome instalado (channel "chrome"); para outro binário: CHROME=/caminho/do/chrome.
+//   Lê portas e origens do .env da raiz, com as mesmas regras do docker-compose.yml.
 import { chromium } from 'playwright-core';
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-const CANAL = process.env.CANAL_PUBLIC_ORIGIN || 'http://localhost:8080';
-const OPCOES = process.env.OPCOES_PUBLIC_ORIGIN || 'http://localhost:8081';
-const browser = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', headless: true });
+const envFile = fileURLToPath(new URL('../.env', import.meta.url));
+const dotenv = {};
+if (existsSync(envFile)) {
+  for (const raw of readFileSync(envFile, 'utf8').split(/\r?\n/)) {
+    const m = raw.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (m) dotenv[m[1]] = m[2];
+  }
+}
+const env = (k, d) => process.env[k] || dotenv[k] || d;
+const CANAL = env('CANAL_PUBLIC_ORIGIN', `http://localhost:${env('CANAL_HOST_PORT', '8080')}`).replace(/\/$/, '');
+const OPCOES = env('OPCOES_PUBLIC_ORIGIN', `http://localhost:${env('OPCOES_HOST_PORT', '8081')}`).replace(/\/$/, '');
+const browser = await chromium.launch(process.env.CHROME
+  ? { executablePath: process.env.CHROME, headless: true }
+  : { channel: 'chrome', headless: true });
 let fail = 0;
 const ok = (cond, msg) => { console.log(`  ${cond ? 'OK  ' : 'FALHA'} ${msg}`); if (!cond) fail = 1; };
 
@@ -48,7 +63,8 @@ await payCase('4000000000000002', 'Recusada');
 await payCase('4000000000000119', 'Indeterminada');
 
 // frame-ancestors: o mesmo canal servido por outra origem (127.0.0.1) não pode embutir o frame.
-{
+// Só faz sentido quando o canal está em localhost (local); atrás de domínio HTTPS é pulado.
+if (new URL(CANAL).hostname === 'localhost') {
   console.log('== frame-ancestors com origem não autorizada');
   const page = await browser.newPage();
   const blocked = [];

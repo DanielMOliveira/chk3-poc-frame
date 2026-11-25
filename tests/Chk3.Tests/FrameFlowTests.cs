@@ -51,6 +51,7 @@ public class FrameFlowTests : IDisposable
     {
         var s = await f.CreateSession();
         var uri = new Uri(s.FrameUrl!);
+        Assert.StartsWith(TestEnv.OpcoesOrigin + "/#pc=", s.FrameUrl);  // frameUrl usa a origem pública do .env
         Assert.Equal("", uri.Query);
         Assert.StartsWith("#pc=pc_", uri.Fragment);
         Assert.DoesNotContain("1000", s.FrameUrl);           // valor nunca na URL
@@ -154,11 +155,11 @@ public class FrameFlowTests : IDisposable
     {
         using var op = await f.Http.GetAsync(TestEnv.Opcoes + "/");
         var csp = op.Headers.GetValues("Content-Security-Policy").Single();
-        Assert.Contains($"frame-ancestors {TestEnv.Get("CANAL_PUBLIC_ORIGIN")}", csp);
+        Assert.Contains($"frame-ancestors {TestEnv.CanalOrigin}", csp);
         Assert.Equal("no-store", op.Headers.CacheControl!.ToString());
         var (_, tc, _) = await f.UpToStep8();
         using var pay = await f.Http.PostAsync(TestEnv.Cartao + "/digitacao", new FormUrlEncodedContent(new Dictionary<string, string> { ["tc"] = tc }));
-        Assert.Contains($"frame-ancestors {TestEnv.Opcoes} {TestEnv.Get("CANAL_PUBLIC_ORIGIN")}", pay.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Contains($"frame-ancestors {TestEnv.OpcoesOrigin} {TestEnv.CanalOrigin}", pay.Headers.GetValues("Content-Security-Policy").Single());
     }
 
     // ---------- Passos 9-14 ----------

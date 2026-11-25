@@ -9,9 +9,10 @@ x-app: &app
   environment: &env
     INTERNAL_API_KEY: ${INTERNAL_API_KEY:?defina no .env}
     SNAPSHOT_SIGNING_KEY: ${SNAPSHOT_SIGNING_KEY:?defina no .env}
-    CANAL_PUBLIC_ORIGIN: ${CANAL_PUBLIC_ORIGIN:?defina no .env}
-    OPCOES_PUBLIC_ORIGIN: ${OPCOES_PUBLIC_ORIGIN:?defina no .env}
-    CARTAO_PUBLIC_ORIGIN: ${CARTAO_PUBLIC_ORIGIN:?defina no .env}
+    # Origens públicas (CSP, frame-ancestors, frameUrl). Se vazias no .env, derivam das portas do host.
+    CANAL_PUBLIC_ORIGIN: ${CANAL_PUBLIC_ORIGIN:-http://localhost:${CANAL_HOST_PORT:-8080}}
+    OPCOES_PUBLIC_ORIGIN: ${OPCOES_PUBLIC_ORIGIN:-http://localhost:${OPCOES_HOST_PORT:-8081}}
+    CARTAO_PUBLIC_ORIGIN: ${CARTAO_PUBLIC_ORIGIN:-http://localhost:${CARTAO_HOST_PORT:-8082}}
     INTEGRATION_INTERNAL_URL: http://integration:8090
     Logging__LogLevel__Default: Information
     Logging__LogLevel__Microsoft.AspNetCore: Warning
@@ -41,14 +42,14 @@ services:
       POSTGRES_CONNECTION: Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}
       CHANNEL_JWT_SECRET: ${CHANNEL_JWT_SECRET:?defina no .env}
       CHANNEL_JWT_ISSUER: ${CHANNEL_JWT_ISSUER:?defina no .env}
-    ports: ["${BIND_ADDR:-127.0.0.1}:8083:8080"]   # só a porta pública. A 8090 (interna) não é publicada.
+    ports: ["${HOST_BIND:-127.0.0.1}:${INTEGRATION_HOST_PORT:-8083}:8080"]   # só a porta pública. A 8090 (interna) não é publicada.
     networks: [fora, cde, dados]
     depends_on: { postgres: { condition: service_healthy } }
 
   opcoes:        # Tela de opções (fora da CDE): passos 5-7 e 14
     <<: *app
     build: { context: ., args: { PROJECT: Opcoes } }
-    ports: ["${BIND_ADDR:-127.0.0.1}:8081:8080"]
+    ports: ["${HOST_BIND:-127.0.0.1}:${OPCOES_HOST_PORT:-8081}:8080"]
     networks: [fora]
     depends_on: [integration]
 
@@ -58,7 +59,7 @@ services:
     environment:
       <<: *env
       AUTORIZACAO_URL: http://autorizacao:8080
-    ports: ["${BIND_ADDR:-127.0.0.1}:8082:8080"]
+    ports: ["${HOST_BIND:-127.0.0.1}:${CARTAO_HOST_PORT:-8082}:8080"]
     networks: [cde]
     depends_on: [integration, autorizacao]
 
@@ -90,9 +91,31 @@ services:
       CHANNEL_JWT_SECRET: ${CHANNEL_JWT_SECRET:?defina no .env}
       CHANNEL_JWT_ISSUER: ${CHANNEL_JWT_ISSUER:?defina no .env}
       INTEGRATION_PUBLIC_URL: http://integration:8080
-    ports: ["${BIND_ADDR:-127.0.0.1}:8080:8080"]
+    ports: ["${HOST_BIND:-127.0.0.1}:${CANAL_HOST_PORT:-8080}:8080"]
     networks: [fora]
     depends_on: [integration]
+
+  tests:         # Testes xUnit dentro da rede do compose: só precisa de Docker. Uso: ./scripts/test.sh
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    profiles: [test]
+    working_dir: /work
+    volumes: [".:/src:ro", "nuget:/root/.nuget/packages"]
+    environment:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+      CHANNEL_JWT_SECRET: ${CHANNEL_JWT_SECRET:?defina no .env}
+      CHANNEL_JWT_ISSUER: ${CHANNEL_JWT_ISSUER:?defina no .env}
+      # Origens públicas (para conferir CSP) e URLs de acesso dentro da rede docker.
+      CANAL_PUBLIC_ORIGIN: ${CANAL_PUBLIC_ORIGIN:-http://localhost:${CANAL_HOST_PORT:-8080}}
+      OPCOES_PUBLIC_ORIGIN: ${OPCOES_PUBLIC_ORIGIN:-http://localhost:${OPCOES_HOST_PORT:-8081}}
+      CARTAO_PUBLIC_ORIGIN: ${CARTAO_PUBLIC_ORIGIN:-http://localhost:${CARTAO_HOST_PORT:-8082}}
+      INTEGRATION_URL: http://integration:8080
+      TEST_OPCOES_URL: http://opcoes:8080
+      TEST_CARTAO_URL: http://cartao:8080
+    # Copia o código (sem bin/obj do host) para não escrever no clone nem depender de permissões.
+    command: ["sh", "-c", "cp -r /src/. /work/ && find /work -type d \\( -name bin -o -name obj \\) -prune -exec rm -rf {} + && dotnet test tests/Chk3.Tests"]
+    networks: [fora, cde]
+    depends_on: [integration, opcoes, cartao]
 
 networks:
   fora: {}
@@ -102,3 +125,4 @@ networks:
 
 volumes:
   pgdata: {}
+  nuget: {}

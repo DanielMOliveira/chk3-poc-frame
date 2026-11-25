@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Smoke ponta a ponta do frame v7 via HTTP (sem navegador): passos 1-4, 6, 7, 8, 9-14 e 3b.
 # Caminhos: aprova, recusa e timeout (indeterminado). Requer: bash, curl, openssl, jq, stack no ar.
+# Lê o .env (portas e origens). Ex.: ./scripts/smoke.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
-set -a; source .env; set +a
+source scripts/lib-env.sh
+load_env .env
 
-INTEGRATION=${INTEGRATION_URL:-http://localhost:8083}
+INTEGRATION=${INTEGRATION_URL}
 OPCOES=${OPCOES_PUBLIC_ORIGIN}
 CARTAO=${CARTAO_PUBLIC_ORIGIN}
 FAIL=0

@@ -37,9 +37,19 @@ public static class TestEnv
         : dotenv.TryGetValue(name, out var dv) ? dv
         : fallback ?? throw new InvalidOperationException($"Defina {name}");
 
-    public static string Integration => Get("INTEGRATION_URL", "http://localhost:8083");
-    public static string Opcoes => Get("OPCOES_PUBLIC_ORIGIN");
-    public static string Cartao => Get("CARTAO_PUBLIC_ORIGIN");
+    // Mesma regra do docker-compose.yml: origem vazia deriva da porta do host.
+    static string Origin(string name, string portVar, string port) =>
+        Get(name, "") is { Length: > 0 } o ? o.TrimEnd('/') : $"http://localhost:{Get(portVar, port)}";
+
+    /// <summary>Origens públicas (o que o navegador vê; usadas para conferir CSP).</summary>
+    public static string CanalOrigin => Origin("CANAL_PUBLIC_ORIGIN", "CANAL_HOST_PORT", "8080");
+    public static string OpcoesOrigin => Origin("OPCOES_PUBLIC_ORIGIN", "OPCOES_HOST_PORT", "8081");
+    public static string CartaoOrigin => Origin("CARTAO_PUBLIC_ORIGIN", "CARTAO_HOST_PORT", "8082");
+
+    /// <summary>URLs de acesso dos testes. No ./scripts/test.sh apontam para os serviços na rede docker.</summary>
+    public static string Integration => Get("INTEGRATION_URL", "") is { Length: > 0 } u ? u : $"http://localhost:{Get("INTEGRATION_HOST_PORT", "8083")}";
+    public static string Opcoes => Get("TEST_OPCOES_URL", "") is { Length: > 0 } u ? u : OpcoesOrigin;
+    public static string Cartao => Get("TEST_CARTAO_URL", "") is { Length: > 0 } u ? u : CartaoOrigin;
 }
 
 public sealed record Session(int Status, Guid TransactionId, string? State, string? FrameUrl, string? PaymentCredential);
