@@ -24,14 +24,20 @@ app.UseStaticFiles();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 app.MapGet("/", () => Html("""
-    <h1>Canal fake (POC CHK3)</h1>
-    <form method="post" action="/checkout">
-      <label>Pedido <input name="orderId" value="PED-1001" required></label>
-      <label>Valor em centavos <input name="amountCents" value="1000" required></label>
-      <label>Parcelas fixas (opcional) <input name="installments" value=""></label>
-      <button>Pagar</button>
-    </form>
-    <p>Cartões de teste: 4111111111111111 (aprova), 4000000000000002 (recusa), 4000000000000119 (timeout = indeterminado). Validade futura, CVV 123.</p>
+    <main class="store">
+      <header class="store-top"><span class="logo">LE</span><div><b>Loja Exemplo</b><small>Canal fake · POC CHK3</small></div></header>
+      <form method="post" action="/checkout" class="store-card">
+        <div class="h1">Seu pedido</div>
+        <div class="sub">O canal cria a sessão no servidor (POST /sessions com o token do canal) e abre o frame de pagamento.</div>
+        <div class="field"><label for="orderId">Pedido</label><input class="input" id="orderId" name="orderId" value="PED-1001" required></div>
+        <div class="row2">
+          <div class="field"><label for="amountCents">Valor em centavos</label><input class="input" id="amountCents" name="amountCents" value="24990" inputmode="numeric" required></div>
+          <div class="field"><label for="installments">Parcelas fixas (opcional)</label><input class="input" id="installments" name="installments" value="" inputmode="numeric"></div>
+        </div>
+        <button class="btn" id="pagar">Ir para o pagamento</button>
+        <div class="note-info">Cartões de teste: 4111 1111 1111 1111 (aprova), 4000 0000 0000 0002 (recusa), 4000 0000 0000 0119 (timeout, indeterminado). Validade futura, CVV 123.</div>
+      </form>
+    </main>
     """));
 
 // Passos 1 a 4 do lado do canal. reopen=1 reusa a mesma Idempotency-Key (3b).
@@ -54,7 +60,7 @@ app.MapPost("/checkout", async (HttpContext ctx, IHttpClientFactory http) =>
     var json = await resp.Content.ReadAsStringAsync();
     var e = HtmlEncoder.Default;
     if (!resp.IsSuccessStatusCode)
-        return Html($"<h1>Erro {(int)resp.StatusCode}</h1><pre>{e.Encode(json)}</pre><a href=\"/\">Voltar</a>");
+        return Html($"<main class=\"store\"><div class=\"store-card\"><div class=\"h1\">Erro {(int)resp.StatusCode} ao criar a sessão</div><pre class=\"note-erro\">{e.Encode(json)}</pre><a class=\"link\" href=\"/\">Voltar</a></div></main>");
 
     using var doc = JsonDocument.Parse(json);
     var root = doc.RootElement;
@@ -66,18 +72,21 @@ app.MapPost("/checkout", async (HttpContext ctx, IHttpClientFactory http) =>
         <input type="hidden" name="installments" value="{e.Encode(f["installments"].ToString())}">
         """;
     var frame = frameUrl is null
-        ? $"<p>Sessão sem frame novo. Estado: <b>{e.Encode(root.GetProperty("state").GetString() ?? "")}</b></p>"
+        ? $"<div class=\"store-card\"><div class=\"h1\">Sessão sem frame novo</div><div class=\"sub\">Estado atual: <b>{e.Encode(root.GetProperty("state").GetString() ?? "")}</b></div></div>"
         : $"<iframe id=\"frame\" src=\"{e.Encode(frameUrl)}\" allow=\"payment\" title=\"Pagamento\"></iframe>";
     return Html($"""
-        <h1>Canal fake: checkout</h1>
-        <p>transactionId: <code>{e.Encode(root.GetProperty("transactionId").ToString())}</code> (HTTP {(int)resp.StatusCode})</p>
-        {frame}
-        <p id="evento" role="status"></p>
-        <div class="acoes">
-          <button id="recarregar" type="button">Recarregar frame (mesma credencial)</button>
-          <form method="post" action="/checkout">{hidden}<button>Reabrir com a mesma Idempotency-Key (3b)</button></form>
-          <a href="/">Novo pedido</a>
-        </div>
+        <main class="checkout">
+          <header class="store-top"><span class="logo">LE</span><div><b>Loja Exemplo</b><small>Canal fake · POC CHK3</small></div></header>
+          {frame}
+          <aside class="store-card side">
+            <div class="kv"><span>transactionId</span><code>{e.Encode(root.GetProperty("transactionId").ToString())}</code></div>
+            <div class="kv"><span>POST /sessions</span><code>HTTP {(int)resp.StatusCode}</code></div>
+            <p id="evento" class="evento" role="status">Aguardando o frame…</p>
+            <button id="recarregar" class="btn ghost" type="button">Recarregar frame (mesma credencial)</button>
+            <form method="post" action="/checkout">{hidden}<button class="btn ghost mt10">Reabrir com a mesma Idempotency-Key (3b)</button></form>
+            <a class="link" href="/">Novo pedido</a>
+          </aside>
+        </main>
         <script src="/canal.js" data-opcoes-origin="{e.Encode(opcoesOrigin)}"></script>
         """);
 });
@@ -95,5 +104,5 @@ string MintJwt()
 }
 
 static IResult Html(string inner) => Results.Content(
-    $"<!doctype html><html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><title>Canal fake</title><link rel=\"stylesheet\" href=\"/canal.css\"></head><body>{inner}</body></html>",
+    $"<!doctype html><html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Loja Exemplo · Canal fake</title><link rel=\"stylesheet\" href=\"/mp-base.css\"><link rel=\"stylesheet\" href=\"/canal.css\"></head><body class=\"bg-mp\">{inner}</body></html>",
     "text/html; charset=utf-8", Encoding.UTF8);

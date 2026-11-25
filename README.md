@@ -5,6 +5,10 @@ POC executável do **Frame V0 v7** do MCN Checkout 3.0, passos **1 a 14** de
 
 **RASCUNHO / POC.** Só cartões de teste. Não é contrato do Gateway MCN e não é ambiente PCI.
 
+**Referência visual do frame:** o modelo do Daniel, "Checkout · Multipagamentos", em
+[`docs/modelo-visual/checkout-multipagamentos.html`](docs/modelo-visual/checkout-multipagamentos.html).
+Ele vale como modelo do frame daqui em diante. Ver a seção "Modelo visual" para o que foi aplicado e os desvios.
+
 Stack: .NET 10 (ASP.NET Core minimal APIs), Postgres 17, Npgsql + Dapper, docker compose.
 Sem Front Door, APIM, Identity Server, Firewall, VPN e Worker.
 
@@ -51,7 +55,7 @@ Também dá para editar as portas direto no `.env`. As origens (CSP, `frame-ance
 
 Use validade futura e CVV `123`. Qualquer outro PAN é recusado, mesmo com Luhn válido. A API Autorização e o mock só aceitam essa lista de teste.
 
-E2E opcional em navegador real: `npm install && npm run e2e`.
+E2E opcional em navegador real: `npm install && npm run e2e`. Com `SHOTS_DIR=/pasta`, salva screenshots das telas.
 - Usa o Google Chrome instalado. Para outro binário, defina `CHROME=/caminho`.
 - Valida CSP, `frame-ancestors`, iframe aninhado e `postMessage`.
 
@@ -83,9 +87,41 @@ Parar:
 
 Regra: com as origens vazias ou comentadas, elas derivam das portas. Atrás de proxy ou túnel com domínio, defina as três origens com o endereço público, sem barra no fim. O `docker-compose.yml`, o `smoke.sh`, o `browser-e2e.mjs` e os testes usam a mesma regra.
 
-## VPS atrás de túnel HTTPS (ex.: Cloudflare Tunnel)
+## Modos de acesso fora da máquina local
 
-Só com o `.env`, sem `docker-compose.override.yml`:
+As portas do host e as origens públicas são independentes:
+- `*_HOST_PORT` é onde a stack escuta, na máquina que roda o compose.
+- `*_PUBLIC_ORIGIN` é o endereço que o **navegador** usa.
+
+O smoke fala direto com as portas do host (`127.0.0.1:*_HOST_PORT`), seja qual for a origem pública.
+
+### Modo A: túnel SSH (o atual da VPS)
+
+Na VPS, com o `.env` abaixo, sem `docker-compose.override.yml`:
+
+```dotenv
+HOST_BIND=127.0.0.1
+CANAL_HOST_PORT=18180
+OPCOES_HOST_PORT=18181
+CARTAO_HOST_PORT=18182
+INTEGRATION_HOST_PORT=18183
+CANAL_PUBLIC_ORIGIN=http://localhost:8080
+OPCOES_PUBLIC_ORIGIN=http://localhost:8081
+CARTAO_PUBLIC_ORIGIN=http://localhost:8082
+```
+
+No PC de quem testa, abrir o túnel e depois acessar `http://localhost:8080`:
+
+```bash
+ssh -N -L 8080:127.0.0.1:18180 -L 8081:127.0.0.1:18181 -L 8082:127.0.0.1:18182 -L 8083:127.0.0.1:18183 <usuario>@<vps>
+```
+
+- As portas **locais** do PC (8080 a 8082) precisam ser iguais às das origens públicas, porque a CSP e o `frame-ancestors` comparam a origem exata.
+- Se 8080 a 8082 estiverem ocupadas no PC, troque as portas locais do túnel **e** as `*_PUBLIC_ORIGIN` do `.env` da VPS, e rode o deploy de novo.
+- `localhost` é contexto seguro no navegador, mesmo em HTTP.
+- A porta 8083 (`POST /sessions`) só é necessária para chamar a API direto do PC.
+
+### Modo B: HTTPS atrás de proxy ou túnel (ex.: Cloudflare Tunnel, Nginx)
 
 ```dotenv
 HOST_BIND=127.0.0.1
@@ -98,18 +134,12 @@ OPCOES_PUBLIC_ORIGIN=https://checkout.seu-dominio
 CARTAO_PUBLIC_ORIGIN=https://pay.seu-dominio
 ```
 
-O túnel publica cada hostname no serviço local correspondente:
-- `canal.seu-dominio` → `http://127.0.0.1:18180`
-- `checkout.seu-dominio` → `http://127.0.0.1:18181`
-- `pay.seu-dominio` → `http://127.0.0.1:18182`
-
-A porta 18183 (`/sessions`) só precisa ir para o túnel se um canal externo for chamar a API. O canal fake a chama pela rede interna do compose.
-
-Use três hostnames distintos. Opções e Cartão precisam ser origens diferentes, e o túnel não pode cachear essas páginas, que já respondem `no-store`.
-
-Na VPS:
-- `./scripts/smoke.sh` usa as origens HTTPS e chama a Integration em `http://127.0.0.1:18183`;
-- `./scripts/test.sh` roda dentro da rede do compose.
+- Cada hostname aponta para a porta local correspondente (`canal` → `127.0.0.1:18180`, `checkout` → `:18181`, `pay` → `:18182`). Use três hostnames distintos.
+- Se houver um proxy de autenticação na frente (ex.: Cloudflare Access), os três hostnames precisam estar autorizados para o usuário.
+- O JS só chama a **própria origem**, com `credentials: 'same-origin'`, então o cookie do proxy segue junto. Antes, o `credentials: 'omit'` causava o "Carregando..." infinito.
+- A primeira navegação ao endpoint pay é um POST num iframe. Se o proxy redirecionar esse POST para o login, ele se perde, e a Tela mostra o erro "Não conseguimos abrir a digitação do cartão".
+- Essa limitação é do proxy, não do POC: autentique os três hostnames antes, abrindo cada um uma vez.
+- Login de proxy dentro de iframe também esbarra na CSP (`frame-src`) e em cookies de terceiros. O modo A não tem esse problema.
 
 ## Arquitetura e mapeamento para o v7
 
@@ -137,7 +167,7 @@ Fluxo:
    - Ela manda a credencial no header `X-Payment-Credential`. Não usa cookie nem storage.
    - A Integration valida **sem consumir**.
    - O frame pode ser reapresentado dentro do TTL: o botão "Recarregar frame" do canal reaplica a mesma URL, e o 3b dá uma credencial nova.
-3. **7** O usuário escolhe cartão e parcelas.
+3. **7** O usuário escolhe "Cartão de crédito" (as parcelas ficam no iframe do cartão, como no modelo visual).
    - A Integration revalida e emite a credencial de digitação (`tc_`, hash gravado, expira com a sessão) mais o snapshot de bandeiras assinado (HMAC-SHA256).
 4. **8** A Tela faz um POST de `tc` para o iframe filho `cartao/digitacao`.
    - A Web App Cartão valida a credencial sem consumir e recebe o snapshot assinado.
@@ -178,6 +208,37 @@ Fluxo:
 - **Containers**: usuário não root, `read_only`, `no-new-privileges`.
 - **Integration**: rate limit por canal (120/min) e limite de tamanho de corpo.
 
+## Modelo visual (referência: `docs/modelo-visual/checkout-multipagamentos.html`)
+
+Aplicado ao POC inteiro, mantendo a arquitetura:
+- **Base comum:** tokens de cor, gradiente roxo, tipografia Helvetica Neue, raios, sombras, campos, botões e estados.
+  - Fica em `src/Shared/design/mp-base.css`, copiado para o `wwwroot` de cada app no build.
+- **Canal fake:** fundo e cartões do modelo. A loja embute o frame.
+- **Tela de opções:** é o `.app` do modelo.
+  - Header com gradiente, marca, "Total a pagar", loja e pedido, e "Ambiente seguro".
+  - Botão Voltar.
+  - Telas com transição: carregando, opções, cartão, processando, aprovado, recusado, em confirmação (indeterminado) e erro/expirado.
+- **Web App Cartão (iframe filho, CDE):** os campos do modelo (número com bandeira, nome, validade, CVV, parcelamento e "Pagar R$ X"). O PAN existe **só** nesse iframe.
+
+Segurança mantida:
+- CSP sem `unsafe-inline` (scripts **e** estilos): todo CSS e JS está em arquivos estáticos.
+- Os `style="..."` e `onclick` do modelo viraram classes e `addEventListener`.
+- Alturas dinâmicas usam CSSOM, que a CSP permite.
+- Sem CDN e sem imagem externa: o logo NuPay do modelo vinha de `logospng.org`; ficou o fallback local.
+
+Desvios do modelo:
+- **"Em breve" (desabilitados, sem comportamento simulado):** Google Pay, Apple Pay, Click to Pay, NuPay, Dois cartões de crédito, Visa Pix · Biometria, Pix · Open Finance e Pix · Copia e Cola. As telas internas desses meios no modelo (carteira, QR, bancos, OTP, divisão de valor) não foram implementadas.
+- **Marcas:** sem os SVGs oficiais (marcas registradas, pasta `brands/` do modelo). Usei os fallbacks neutros do próprio modelo, convertidos em CSS.
+- **Textos sem promessa falsa:** sem "3DS" e sem "tokenização Card on File". O subtítulo do cartão diz que os dados são digitados num ambiente isolado. O status "Confirmado" virou "Autorizado", porque o retorno do frame não prova o pagamento final.
+- **Parcelamento:** mostrado como "Nx de R$ Y", sem "sem juros/c/ juros" (regra de juros desconhecida). Fica dentro do iframe do cartão, como no modelo. É enviado no passo 9 e validado no 10.
+- **Nome impresso:** campo exigido na UI como no modelo, mas **não enviado** (campo do Gateway a confirmar).
+- **CVV com 3 dígitos:** Amex não é suportado no POC. A bandeira só aparece como rótulo.
+- **Telas novas no mesmo estilo:** recusado, em confirmação (indeterminado), erro/expirado e falha de rede com "Tentar novamente". O botão "Voltar ao início" virou "Voltar à loja" (avisa o canal por `postMessage`), já que não há segunda tentativa na mesma sessão.
+
+Falha visível:
+- Toda chamada do navegador tem timeout (15 s na Tela, 25 s no pagamento) e `redirect: 'error'`.
+- Falha de rede, redirect de proxy ou iframe do cartão que não sinaliza "pronto" a tempo mostram uma tela de erro, em vez de "Carregando..." infinito.
+
 ## Testes
 
 `tests/Chk3.Tests` (xUnit). São 37 casos:
@@ -203,7 +264,7 @@ Fluxo:
 - **Base de dados.** Pagamento e sessão estão numa tabela só (`payment_sessions`). Não há projeção de consulta: o passo 13 grava estado, evidência e outbox.
 - **"Sessão sem tentativa concluída" (6 e 3b).** O POC fecha o frame assim que existe **qualquer** tentativa registrada, mesmo em andamento. É mais restritivo que o texto do v7.
 - **Recarregar.** A credencial não sobrevive a um F5 dentro do iframe, porque fica só em memória e o hash é limpo. A reapresentação no TTL é feita pelo canal, reaplicando a mesma `frameUrl`, ou pelo 3b.
-- **Parcelas.** Escolhidas na Tela (7), levadas no POST do passo 8, enviadas no 9 e validadas no 10 contra o cadastro. Segue o v7, que mantém o envio no 9. A proposta de gravar no 7 está pendente.
+- **Parcelas.** Escolhidas na página de digitação (8/9, como no modelo visual, e não na Tela no passo 7), enviadas no 9 e validadas no 10 contra o cadastro. O v7 mantém o envio no 9. A proposta de gravar no 7 está pendente.
 - **Antifraude.** O `deviceSessionId` é gerado por um script local fake. O provedor real não está integrado.
 - **TTL mínimo.** O cadastro aceita a partir de 1 s, só para testar a expiração (canal `canal-ttl-curto`). Em produção, definir um mínimo.
 - **Card testing.** O limite de falhas é por credencial e fica em memória na Web App Cartão (uma réplica).
@@ -233,9 +294,33 @@ src/Autorizacao   API Autorização
 src/GatewayMock   mock do Gateway
 src/CanalFake     canal fake
 tests/Chk3.Tests  testes
-scripts/          init-env.sh, smoke.sh, test.sh, lib-env.sh, browser-e2e.mjs
+scripts/          init-env.sh, smoke.sh, test.sh, lib-env.sh, browser-e2e.mjs, deploy.sh, deploy-remote.sh
+docs/modelo-visual/ modelo visual de referência (HTML do Daniel)
 ```
 
-## Deploy
-Nada é publicado por este repo. O deploy na VPS será feito via git, coordenado com o agente Monitor Casa:
-`.env` próprio da VPS (nunca versionado, gerado com `init-env.sh`), portas e origens HTTPS no `.env` (ver seção da VPS).
+## Deploy via git
+
+`scripts/deploy.sh [ref]` roda **na máquina alvo**, dentro do clone. O ref padrão é `origin/main`. Ele:
+1. recusa rodar sem `.env`, com `docker-compose.override.yml` presente (use `ALLOW_OVERRIDE=1` para forçar) ou com alterações locais em arquivos versionados;
+2. faz `git fetch` e `git checkout --detach <sha do ref>`;
+3. faz `docker compose up -d --build --remove-orphans`;
+4. espera o `/health` da Integration;
+5. roda o `./scripts/smoke.sh`.
+
+Qualquer falha encerra com `DEPLOY FALHOU: ...`, código ≠ 0, `ps` e logs.
+
+De outra máquina, por SSH:
+
+```bash
+scripts/deploy-remote.sh <ssh-host> <dir-do-app> [ref]
+# ex.: scripts/deploy-remote.sh vps /home/grokbot/apps/chk3-poc-frame origin/main
+```
+
+O `deploy-remote.sh` faz o fetch no alvo e executa o `deploy.sh` **da versão do ref**, então o próprio script também é atualizado.
+
+**Credencial do git:** o repositório é público, e o remote da VPS é HTTPS sem token (`https://github.com/DanielMOliveira/chk3-poc-frame.git`). O fetch não precisa de credencial. Se o repo ficar privado:
+- exporte `DEPLOY_GIT_TOKEN` (token só de leitura) na máquina que dispara o deploy;
+- o `deploy-remote.sh` envia o token por **stdin** ao ambiente do deploy remoto, que o usa só num `git -c credential.helper=... fetch`;
+- o token não vai para a linha de comando, para o histórico, para o `git config` nem para a URL do remote.
+
+O `.env` da VPS nunca é versionado. Gere com `init-env.sh` e ajuste portas e origens conforme o modo de acesso.

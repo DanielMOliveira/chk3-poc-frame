@@ -1,6 +1,71 @@
-body{font-family:system-ui,sans-serif;margin:0;padding:16px;color:#222}
-h1{font-size:20px;margin:0 0 8px}
-fieldset{border:1px solid #ddd;margin:12px 0}
-select,button{font-size:16px;padding:8px}
-button{background:#0a5;color:#fff;border:0;border-radius:4px;margin-top:12px}
-iframe{width:100%;height:330px;border:0}
+/* Tela de opções: layout do modelo "Checkout · Multipagamentos". */
+body{background:transparent;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:16px 12px}
+.app{width:100%;max-width:440px;background:var(--branco);border-radius:24px;box-shadow:var(--sombra);overflow:hidden;position:relative;min-height:max(640px, calc(100dvh - 32px));display:flex;flex-direction:column}
+
+/* ---------- HEADER ---------- */
+.top{background:var(--grad);color:var(--branco);padding:18px 20px 22px;position:relative}
+.brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:.2px;font-size:15px}
+.brand .dot{width:22px;height:22px;border-radius:7px;background:var(--branco);position:relative;flex:none}
+.brand .dot::after{content:"";position:absolute;inset:6px;border-radius:3px;background:var(--roxo)}
+.top .secure{display:flex;align-items:center;gap:6px;font-size:11px;opacity:.9;margin-top:14px}
+.top .secure svg{width:13px;height:13px}
+.order{display:flex;align-items:flex-end;justify-content:space-between;margin-top:6px}
+.order .label{font-size:12px;opacity:.85}
+.order .val{font-size:30px;font-weight:700;line-height:1.1;letter-spacing:-.5px}
+.order .merchant{font-size:12px;opacity:.85;margin-top:2px}
+.backbar{display:flex;align-items:center;gap:10px;margin-bottom:10px;min-height:20px}
+.back{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.16);border:none;color:var(--branco);font-size:13px;font-family:inherit;padding:6px 12px 6px 8px;border-radius:20px;cursor:pointer;font-weight:600}
+.back svg{width:14px;height:14px}
+.back:active{background:rgba(255,255,255,.28)}
+
+/* ---------- BODY / SCREENS ---------- */
+.body{flex:1;position:relative;overflow:hidden;overflow:clip} /* clip: o foco num campo durante a transição não rola o container */
+.screen{position:absolute;inset:0;padding:22px 20px 24px;overflow-y:auto;opacity:0;transform:translateX(24px);pointer-events:none;visibility:hidden;transition:opacity .28s ease, transform .28s ease, visibility 0s .28s}
+.screen.active{opacity:1;transform:none;pointer-events:auto;visibility:visible;transition:opacity .28s ease, transform .28s ease}
+@media (prefers-reduced-motion:reduce){.screen{transition:none}}
+.sub.center{max-width:300px}
+
+/* ---------- MÉTODOS ---------- */
+.methods{margin-top:18px;display:flex;flex-direction:column;gap:10px}
+.method{display:flex;align-items:center;gap:14px;width:100%;text-align:left;background:var(--branco);border:1px solid var(--borda);border-radius:14px;padding:14px 15px;cursor:pointer;font-family:inherit;color:inherit;transition:border-color .15s, transform .08s, box-shadow .15s}
+.method:hover:not(:disabled){border-color:var(--roxo);box-shadow:0 4px 16px rgba(124,88,250,.12)}
+.method:active:not(:disabled){transform:scale(.99)}
+.method:disabled,.wbtn:disabled,.nupay-btn:disabled{cursor:not-allowed;opacity:.55;filter:grayscale(.6)}
+.method .ico{min-width:44px;height:32px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;gap:3px;background:#F4F3F7;overflow:hidden;padding:0 7px}
+.method .txt{flex:1;min-width:0;display:flex;flex-direction:column}
+.method .nm{font-size:14px;font-weight:600}
+.method .ds{font-size:11.5px;color:var(--cinza);margin-top:2px}
+.method .chev{color:var(--cinza-claro);flex:none}
+.method .chev svg{width:18px;height:18px}
+
+/* ---------- CARTEIRAS (em breve no POC) ---------- */
+.wallet-title{font-size:14px;font-weight:700;margin-top:18px;margin-bottom:12px}
+.wallet-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.wbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;height:52px;border:1px solid var(--borda);border-radius:12px;background:#fff;padding:0 8px;font-family:inherit;color:inherit}
+.wbtn-ctp{flex-direction:row;flex-wrap:wrap;gap:4px;align-content:center}
+.wbtn .soon{flex-basis:100%;text-align:center;font-size:9px;font-weight:700;color:var(--cinza);letter-spacing:.3px}
+.wsep{width:1px;height:16px;background:var(--borda);display:inline-block}
+.nupay-btn{display:flex;align-items:center;justify-content:center;gap:8px;height:52px;width:100%;margin-top:10px;border:1px solid var(--borda);border-radius:12px;background:#fff;font-family:inherit;color:inherit}
+.nupay-nm{font-weight:700;font-size:14px;color:#820AD1}
+.divider{display:flex;align-items:center;gap:12px;margin:18px 0;color:var(--cinza);font-size:12px;font-weight:600}
+.divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--borda)}
+
+/* Marcas: fallbacks neutros do modelo (sem asset oficial e sem CDN externo) */
+.fb-visa{font-weight:800;font-style:italic;color:#1A1F71;font-size:12px}
+.fb-visa.sm{font-size:10px}
+.fb-mc{display:inline-flex}
+.fb-mc i{width:13px;height:13px;border-radius:50%;background:#EB001B;display:inline-block}
+.fb-mc i+i{background:#F79E1B;margin-left:-6px;opacity:.9}
+.fb-mc.sm i{width:11px;height:11px}
+.fb-gp{font-weight:700;font-size:11px}
+.fb-gp .g1{color:#4285F4}.fb-gp .g2{color:#EA4335}.fb-gp .g3{color:#FBBC05}.fb-gp .g4{color:#34A853}.fb-gp .g5{color:#5F6368}
+.fb-ap{font-weight:600;font-size:12px;color:#000}
+.fb-ctp{width:18px;height:18px}
+.fb-pix{width:22px;height:22px;fill:#32BCAD}
+.fb-nu{width:28px;height:20px;background:#820AD1;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:11px;font-style:italic}
+
+/* ---------- IFRAME DO CARTÃO ---------- */
+.cardframe{position:relative;margin-top:4px;min-height:200px}
+.cardframe iframe{width:100%;height:420px;border:0;display:block;background:transparent}
+.cardframe-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.spinner.sm{width:32px;height:32px;border-width:3px}

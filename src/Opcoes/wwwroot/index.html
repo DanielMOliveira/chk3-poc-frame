@@ -2,30 +2,188 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Pagamento</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Checkout · Multipagamentos</title>
+  <link rel="stylesheet" href="/mp-base.css">
   <link rel="stylesheet" href="/opcoes.css">
   <script src="/opcoes.js" defer></script>
 </head>
 <body>
-  <main>
-    <section id="loading">Carregando...</section>
-    <section id="erro" hidden><p>Não foi possível abrir o pagamento. Volte à loja e tente de novo.</p></section>
-    <section id="opcoes" hidden>
-      <h1 id="merchant"></h1>
-      <p id="resumo"></p>
-      <p id="bandeiras"></p>
-      <fieldset>
-        <legend>Meio de pagamento</legend>
-        <label><input type="radio" name="meio" value="cartao_credito" checked> Cartão de crédito</label>
-      </fieldset>
-      <label id="parcelas-wrap">Parcelas <select id="parcelas"></select></label>
-      <button id="continuar" type="button">Continuar</button>
+<div class="app">
+
+  <!-- ============ HEADER ============ -->
+  <div class="top">
+    <div class="backbar">
+      <button class="back" id="backBtn" type="button" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+        Voltar
+      </button>
+    </div>
+    <div class="brand"><span class="dot"></span> Multipagamentos</div>
+    <div class="order">
+      <div>
+        <div class="label">Total a pagar</div>
+        <div class="val" id="hdrVal">—</div>
+        <div class="merchant" id="hdrMerchant">&nbsp;</div>
+      </div>
+    </div>
+    <div class="secure">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      Ambiente seguro · dados criptografados
+    </div>
+  </div>
+
+  <!-- ============ CORPO ============ -->
+  <div class="body">
+
+    <!-- CARREGANDO (passo 6) -->
+    <section class="screen active" id="s-loading" aria-live="polite">
+      <div class="center-state">
+        <div class="spinner"></div>
+        <div class="h1 mt24">Carregando pagamento</div>
+        <div class="step-info">Validando a sessão…</div>
+      </div>
     </section>
-    <section id="digitacao" hidden>
-      <iframe name="cartao" id="cartao" title="Dados do cartão" allow="payment"></iframe>
+
+    <!-- OPÇÕES (passo 6b) -->
+    <section class="screen" id="s-options">
+      <div class="h1">Como você quer pagar?</div>
+      <div class="wallet-title">Pague com carteiras digitais</div>
+      <div class="wallet-row">
+        <button class="wbtn" type="button" disabled aria-label="Google Pay (em breve)">
+          <span class="fb-gp"><span class="g1">G</span><span class="g2">o</span><span class="g3">o</span><span class="g1">g</span><span class="g4">l</span><span class="g2">e</span> <span class="g5">Pay</span></span>
+          <span class="soon">Em breve</span>
+        </button>
+        <button class="wbtn" type="button" disabled aria-label="Apple Pay (em breve)">
+          <span class="fb-ap"> Pay</span>
+          <span class="soon">Em breve</span>
+        </button>
+        <button class="wbtn wbtn-ctp" type="button" disabled aria-label="Click to Pay (em breve)">
+          <svg class="fb-ctp" viewBox="0 0 24 24" fill="none" stroke="#EB6C1E" stroke-width="1.8"><path d="M13 2L4.5 12.5H11l-1 9.5 8.5-11H12z"/></svg>
+          <span class="wsep"></span><span class="fb-visa sm">VISA</span><span class="fb-mc sm"><i></i><i></i></span>
+          <span class="soon">Em breve</span>
+        </button>
+      </div>
+      <button class="nupay-btn" type="button" disabled aria-label="NuPay (em breve)">
+        <span class="fb-nu">nu</span><span class="nupay-nm">NuPay</span><span class="tag breve">Em breve</span>
+      </button>
+      <div class="divider">ou</div>
+      <div class="methods">
+        <button class="method" id="m-card" type="button">
+          <span class="ico"><span class="fb-visa">VISA</span><span class="fb-mc"><i></i><i></i></span></span>
+          <span class="txt"><span class="nm">Cartão de crédito</span><span class="ds" id="m-card-ds">Crédito à vista ou parcelado</span></span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 6l6 6-6 6"/></svg></span>
+        </button>
+        <button class="method" type="button" disabled>
+          <span class="ico"><span class="fb-visa">VISA</span><span class="fb-mc"><i></i><i></i></span></span>
+          <span class="txt"><span class="nm">Dois cartões de crédito<span class="tag breve">Em breve</span></span><span class="ds">Divida o valor entre dois cartões</span></span>
+        </button>
+        <button class="method" type="button" disabled>
+          <span class="ico"><span class="fb-visa">VISA</span><svg class="fb-pix" viewBox="0 0 24 24"><path d="M12 2l3.5 3.5L12 9 8.5 5.5 12 2zm-6.5 6.5L9 12l-3.5 3.5L2 12l3.5-3.5zm13 0L22 12l-3.5 3.5L15 12l3.5-3.5zM12 15l3.5 3.5L12 22l-3.5-3.5L12 15z"/></svg></span>
+          <span class="txt"><span class="nm">Visa Pix · Biometria<span class="tag breve">Em breve</span></span><span class="ds">Pix autenticado por biometria (Passkey)</span></span>
+        </button>
+        <button class="method" type="button" disabled>
+          <span class="ico"><svg class="fb-pix" viewBox="0 0 24 24"><path d="M12 2l3.5 3.5L12 9 8.5 5.5 12 2zm-6.5 6.5L9 12l-3.5 3.5L2 12l3.5-3.5zm13 0L22 12l-3.5 3.5L15 12l3.5-3.5zM12 15l3.5 3.5L12 22l-3.5-3.5L12 15z"/></svg></span>
+          <span class="txt"><span class="nm">Pix · Open Finance<span class="tag breve">Em breve</span></span><span class="ds">Autoriza direto no app do banco</span></span>
+        </button>
+        <button class="method" type="button" disabled>
+          <span class="ico"><svg class="fb-pix" viewBox="0 0 24 24"><path d="M12 2l3.5 3.5L12 9 8.5 5.5 12 2zm-6.5 6.5L9 12l-3.5 3.5L2 12l3.5-3.5zm13 0L22 12l-3.5 3.5L15 12l3.5-3.5zM12 15l3.5 3.5L12 22l-3.5-3.5L12 15z"/></svg></span>
+          <span class="txt"><span class="nm">Pix · Copia e Cola<span class="tag breve">Em breve</span></span><span class="ds">QR Code ou código copia e cola</span></span>
+        </button>
+      </div>
+      <div class="foot-secure">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        Pagamento processado pela Multipagamentos
+      </div>
     </section>
-    <section id="resultado" hidden><p id="resultado-msg" role="status"></p></section>
-  </main>
+
+    <!-- CARTÃO DE CRÉDITO (passos 7 e 8): campos dentro do iframe do endpoint pay (CDE) -->
+    <section class="screen" id="s-card">
+      <div class="h1">Cartão de crédito</div>
+      <div class="sub">Preencha os dados do cartão. Eles são digitados num ambiente seguro e isolado, separado desta página.</div>
+      <div class="cardframe">
+        <div class="cardframe-loading" id="cardLoading"><div class="spinner sm"></div></div>
+        <iframe name="cartao" id="cartao" title="Dados do cartão" allow="payment"></iframe>
+      </div>
+    </section>
+
+    <!-- PROCESSANDO (passos 9 a 13) -->
+    <section class="screen" id="s-proc" aria-live="polite">
+      <div class="center-state">
+        <div class="spinner"></div>
+        <div class="h1 mt24">Processando pagamento</div>
+        <div class="step-info" id="procStep">Enviando ao adquirente…</div>
+      </div>
+    </section>
+
+    <!-- APROVADO -->
+    <section class="screen" id="s-success">
+      <div class="center-state">
+        <div class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></div>
+        <div class="h1">Pagamento aprovado</div>
+        <div class="succ-val" data-valor>—</div>
+        <div class="receipt">
+          <div class="r"><span class="k">Forma de pagamento</span><span class="v">Cartão de crédito</span></div>
+          <div class="r"><span class="k">Pedido</span><span class="v" data-pedido>—</span></div>
+          <div class="r"><span class="k">Transação</span><span class="v" data-tx>—</span></div>
+          <div class="r"><span class="k">Status</span><span class="v ok">Autorizado</span></div>
+        </div>
+        <button class="btn ghost" type="button" data-voltar>Voltar à loja</button>
+      </div>
+    </section>
+
+    <!-- RECUSADO -->
+    <section class="screen" id="s-declined">
+      <div class="center-state">
+        <div class="check erro"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg></div>
+        <div class="h1">Pagamento recusado</div>
+        <div class="succ-val" data-valor>—</div>
+        <div class="receipt">
+          <div class="r"><span class="k">Forma de pagamento</span><span class="v">Cartão de crédito</span></div>
+          <div class="r"><span class="k">Pedido</span><span class="v" data-pedido>—</span></div>
+          <div class="r"><span class="k">Transação</span><span class="v" data-tx>—</span></div>
+          <div class="r"><span class="k">Status</span><span class="v erro">Recusado</span></div>
+        </div>
+        <div class="note-info">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          O emissor não autorizou a compra. Volte à loja para tentar outro meio de pagamento.
+        </div>
+        <button class="btn ghost" type="button" data-voltar>Voltar à loja</button>
+      </div>
+    </section>
+
+    <!-- INDETERMINADO -->
+    <section class="screen" id="s-pending">
+      <div class="center-state">
+        <div class="check alerta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <div class="h1">Pagamento em confirmação</div>
+        <div class="succ-val" data-valor>—</div>
+        <div class="receipt">
+          <div class="r"><span class="k">Forma de pagamento</span><span class="v">Cartão de crédito</span></div>
+          <div class="r"><span class="k">Pedido</span><span class="v" data-pedido>—</span></div>
+          <div class="r"><span class="k">Transação</span><span class="v" data-tx>—</span></div>
+          <div class="r"><span class="k">Status</span><span class="v alerta" id="pendingStatus">Em confirmação</span></div>
+        </div>
+        <div class="note-info">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <span id="pendingMsg">Não conseguimos confirmar o resultado agora. A loja será avisada do resultado final. Não tente pagar de novo.</span>
+        </div>
+        <button class="btn ghost" type="button" data-voltar>Voltar à loja</button>
+      </div>
+    </section>
+
+    <!-- ERRO / EXPIRADO -->
+    <section class="screen" id="s-error" role="alert">
+      <div class="center-state">
+        <div class="check cinza"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M12 7v6M12 17h.01"/></svg></div>
+        <div class="h1" id="errTitle">Não foi possível abrir o pagamento</div>
+        <div class="sub center" id="errMsg">Volte à loja e tente de novo.</div>
+        <button class="btn" type="button" id="errRetry" hidden>Tentar novamente</button>
+        <button class="btn ghost" type="button" data-voltar>Voltar à loja</button>
+      </div>
+    </section>
+
+  </div>
+</div>
 </body>
 </html>

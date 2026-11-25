@@ -36,37 +36,64 @@ app.MapPost("/digitacao", async (HttpContext ctx, IHttpClientFactory http) =>
     if (!ctx.Request.HasFormContentType) return Results.BadRequest();
     var form = await ctx.Request.ReadFormAsync();
     string tc = form["tc"].ToString();
-    int.TryParse(form["installments"], out var installments);
-    if (tc.Length is 0 or > 128) return Html(ErrorPage(), 401);
+    if (tc.Length is 0 or > 128) return Html(ErrorPage(opcoesOrigin), 401);
 
     using var req = new HttpRequestMessage(HttpMethod.Post, "/internal/v1/typing-credential/validate");
     req.Headers.Add(Web.TypingCredentialHeader, tc);
     using var resp = await http.CreateClient("integration").SendAsync(req);
-    if (!resp.IsSuccessStatusCode) return Html(ErrorPage(), 401);
+    if (!resp.IsSuccessStatusCode) return Html(ErrorPage(opcoesOrigin), 401);
     var v = (await resp.Content.ReadFromJsonAsync<TypingValidation>())!;
 
     var e = HtmlEncoder.Default;
+    string M(string name, object? value) => $"<meta name=\"chk3-{name}\" content=\"{e.Encode(value?.ToString() ?? "")}\">";
     // Credencial e snapshot vão em <meta> lidos pelo JS e removidos do DOM. Página no-store, sem log.
+    // Valor só para exibição (botão e parcelas); o passo 9 não envia valor.
     return Html($$"""
         <!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
-        <meta name="chk3-tc" content="{{e.Encode(tc)}}">
-        <meta name="chk3-snapshot" content="{{e.Encode(v.Snapshot)}}">
-        <meta name="chk3-installments" content="{{(v.FixedInstallments ?? Math.Max(1, installments))}}">
-        <meta name="chk3-parent-origin" content="{{e.Encode(opcoesOrigin)}}">
-        <title>Dados do cartão</title><link rel="stylesheet" href="/digitacao.css">
+        {{M("tc", tc)}}
+        {{M("snapshot", v.Snapshot)}}
+        {{M("parent-origin", opcoesOrigin)}}
+        {{M("amount", v.AmountCents)}}
+        {{M("currency", v.Currency)}}
+        {{M("max-installments", v.MaxInstallments)}}
+        {{M("fixed-installments", v.FixedInstallments)}}
+        {{M("brands", string.Join(",", v.Brands ?? []))}}
+        <title>Dados do cartão</title>
+        <link rel="stylesheet" href="/mp-base.css"><link rel="stylesheet" href="/digitacao.css">
         <script src="/antifraude-fake.js"></script>
         <script src="/digitacao.js" defer></script></head>
         <body>
         <form id="f" autocomplete="on" novalidate>
-          <label>Número do cartão <input id="pan" inputmode="numeric" autocomplete="cc-number" maxlength="23" required></label>
-          <div class="row">
-            <label>Validade (MM/AA) <input id="exp" inputmode="numeric" autocomplete="cc-exp" maxlength="5" placeholder="MM/AA" required></label>
-            <label>CVV <input id="cvv" inputmode="numeric" autocomplete="cc-csc" maxlength="3" required></label>
+          <div class="fieldwrap field">
+            <label for="pan">Número do cartão</label>
+            <input class="input card" id="pan" inputmode="numeric" autocomplete="cc-number" placeholder="0000 0000 0000 0000" maxlength="19" required>
+            <span class="cardbrand" id="brand"></span>
           </div>
-          <p id="info"></p>
-          <button id="pay" type="submit">Pagar</button>
-          <p id="msg" role="status"></p>
+          <div class="field">
+            <label for="name">Nome impresso no cartão</label>
+            <input class="input" id="name" autocomplete="cc-name" placeholder="Como está no cartão" maxlength="60">
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label for="exp">Validade</label>
+              <input class="input" id="exp" inputmode="numeric" autocomplete="cc-exp" placeholder="MM/AA" maxlength="5" required>
+            </div>
+            <div class="field">
+              <label for="cvv">CVV</label>
+              <input class="input" id="cvv" inputmode="numeric" autocomplete="cc-csc" placeholder="123" maxlength="3" required>
+            </div>
+          </div>
+          <div class="field">
+            <label for="inst">Parcelamento</label>
+            <select id="inst"></select>
+          </div>
+          <div class="note-erro" id="msg" role="alert" hidden></div>
+          <button class="btn" id="pay" type="submit" disabled>Pagar</button>
+          <div class="foot-secure">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+            Não armazenamos o número nem o CVV
+          </div>
         </form>
         </body></html>
         """, 200);
@@ -94,9 +121,13 @@ app.MapPost("/api/authorize", async (HttpContext ctx, IHttpClientFactory http) =
 app.Run();
 
 static IResult Html(string html, int status) => Results.Content(html, "text/html; charset=utf-8", Encoding.UTF8, status);
-static string ErrorPage() => """
-    <!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Sessão inválida</title><link rel="stylesheet" href="/digitacao.css"></head>
-    <body><p>Não foi possível abrir a digitação. Volte e tente de novo.</p></body></html>
+// Credencial inválida/expirada: avisa a Tela de opções (que mostra o erro no layout do modelo).
+static string ErrorPage(string parentOrigin) => $"""
+    <!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+    <meta name="chk3-parent-origin" content="{HtmlEncoder.Default.Encode(parentOrigin)}">
+    <title>Sessão inválida</title><link rel="stylesheet" href="/mp-base.css"><link rel="stylesheet" href="/digitacao.css">
+    <script src="/digitacao-erro.js" defer></script></head>
+    <body><p class="note-erro">Não foi possível abrir a digitação. Volte à loja e tente de novo.</p></body></html>
     """;
 
-record TypingValidation(Guid TransactionId, string Snapshot, int? FixedInstallments);
+record TypingValidation(Guid TransactionId, string Snapshot, int? FixedInstallments, int MaxInstallments, string[]? Brands, long AmountCents, string Currency);

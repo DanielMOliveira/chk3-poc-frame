@@ -168,7 +168,12 @@ public static partial class Endpoints
     {
         var s = await store.FindOpenSessionByCredentialAsync(ctx.Request.Headers[Web.TypingCredentialHeader], "digitacao");
         if (s is null) return Err(401, "recusada");
-        return Results.Ok(new { transactionId = s.TransactionId, snapshot = signer.Sign(ToSnapshot(s)), fixedInstallments = s.Installments });
+        // Valor e moeda só para exibição na página de digitação (o navegador nunca envia valor no passo 9).
+        return Results.Ok(new
+        {
+            transactionId = s.TransactionId, snapshot = signer.Sign(ToSnapshot(s)), fixedInstallments = s.Installments,
+            maxInstallments = s.MaxInstallments, brands = s.Brands, amountCents = s.AmountCents, currency = s.Currency,
+        });
     }
 
     // ---------- Passo 10: tentativa única atômica, sem PAN ----------

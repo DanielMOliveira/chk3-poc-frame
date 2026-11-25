@@ -1,0 +1,95 @@
+/* Base visual "Checkout · Multipagamentos" (modelo do Daniel, referência visual do frame).
+   Tokens, tipografia, campos, botões e estados. Compartilhado por Canal, Opções e Cartão
+   (copiado para o wwwroot de cada app no build). Sem estilos inline: CSP style-src 'self'. */
+:root{
+  --preto:#000000;
+  --branco:#FFFFFF;
+  --cinza:#8F8D93;
+  --cinza-claro:#CECECE;
+  --roxo:#7C58FA;
+  --roxo-esc:#4B2FD6;
+  --grad:linear-gradient(135deg,#7C58FA 0%,#4B2FD6 100%);
+  --grad-suave:linear-gradient(135deg,#F3EFFF 0%,#EAE3FF 100%);
+  --sucesso:#1E9E5A;
+  --alerta:#E6A100;
+  --erro:#D64545;
+  --info:#2F6FED;
+  --borda:#ECEBEF;
+  --sombra:0 8px 30px rgba(20,10,60,.10);
+  --raio:16px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;color:var(--preto)}
+.bg-mp{
+  background:
+    radial-gradient(1200px 600px at 100% -10%, rgba(124,88,250,.18), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(75,47,214,.14), transparent 55%),
+    #F6F5F9;
+}
+[hidden]{display:none !important}
+
+.h1{font-size:19px;font-weight:700;letter-spacing:-.3px}
+.sub{font-size:13px;color:var(--cinza);margin-top:5px;line-height:1.5}
+
+/* ---------- FORM ---------- */
+.field{margin-top:14px}
+.field label{display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:6px}
+.input,select{
+  width:100%;font-family:inherit;font-size:15px;color:var(--preto);
+  padding:13px 14px;border:1px solid var(--borda);border-radius:12px;background:var(--branco);
+  outline:none;transition:border-color .15s, box-shadow .15s;
+}
+.input:focus,select:focus{border-color:var(--roxo);box-shadow:0 0 0 3px rgba(124,88,250,.15)}
+.input.card{letter-spacing:1.5px}
+.input.invalid{border-color:var(--erro)}
+.row2{display:flex;gap:12px}
+.row2>*{flex:1}
+.cardbrand{position:absolute;right:12px;top:34px;font-size:11px;font-weight:700;color:var(--cinza)}
+.fieldwrap{position:relative}
+
+/* ---------- BOTÕES ---------- */
+.btn{
+  width:100%;font-family:inherit;font-size:15px;font-weight:700;color:var(--branco);
+  background:var(--grad);border:none;border-radius:14px;padding:15px;cursor:pointer;
+  margin-top:20px;transition:transform .08s, opacity .2s;display:flex;
+  align-items:center;justify-content:center;gap:9px;
+}
+.btn:active{transform:scale(.985)}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+.btn.ghost{background:var(--branco);color:var(--roxo-esc);border:1.5px solid var(--roxo)}
+.btn.dark{background:var(--preto)}
+.btn svg{width:18px;height:18px}
+.btn.mt10{margin-top:10px}
+
+.foot-secure{display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;color:var(--cinza);margin-top:16px}
+.foot-secure svg{width:13px;height:13px}
+
+.tag{font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 7px;border-radius:20px;display:inline-block;vertical-align:middle;margin-left:6px}
+.tag.inst{background:#EAF7EF;color:var(--sucesso)}
+.tag.novo{background:#EEE9FF;color:var(--roxo-esc)}
+.tag.breve{background:#F4F3F7;color:var(--cinza)}
+
+/* ---------- ESTADOS ---------- */
+.center-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:20px}
+.spinner{width:52px;height:52px;border-radius:50%;border:4px solid #EEE9FF;border-top-color:var(--roxo);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.step-info{font-size:13px;color:var(--cinza);margin-top:16px;min-height:20px}
+.mt24{margin-top:24px}
+.check{width:88px;height:88px;border-radius:50%;background:var(--grad);display:flex;align-items:center;justify-content:center;margin-bottom:22px;animation:pop .4s ease}
+.check.erro{background:var(--erro)}
+.check.alerta{background:var(--alerta)}
+.check.cinza{background:var(--cinza)}
+@keyframes pop{0%{transform:scale(.4);opacity:0}100%{transform:scale(1);opacity:1}}
+.check svg{width:44px;height:44px;color:#fff}
+.succ-val{font-size:26px;font-weight:700;margin-top:4px}
+.receipt{width:100%;border:1px dashed var(--borda);border-radius:13px;padding:14px;margin-top:20px;text-align:left}
+.receipt .r{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:5px 0}
+.receipt .r .k{color:var(--cinza)}
+.receipt .r .v{font-weight:600;text-align:right;word-break:break-all}
+.v.ok{color:var(--sucesso)} .v.erro{color:var(--erro)} .v.alerta{color:var(--alerta)}
+
+.note-info{background:#EAF1FF;color:#1b4fb0;font-size:11.5px;padding:10px 12px;border-radius:10px;margin-top:14px;line-height:1.45;display:flex;gap:8px;text-align:left}
+.note-info svg{width:15px;height:15px;flex:none;margin-top:1px}
+.note-erro{background:#FDECEC;color:#9b2c2c;font-size:12px;padding:10px 12px;border-radius:10px;margin-top:14px;line-height:1.45}
+@media (prefers-reduced-motion:reduce){.check,.spinner{animation:none}}

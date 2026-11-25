@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Checkout · Multipagamentos</title>
+<style>
+  :root{
+    --preto:#000000;
+    --branco:#FFFFFF;
+    --cinza:#8F8D93;
+    --cinza-claro:#CECECE;
+    --roxo:#7C58FA;
+    --roxo-esc:#4B2FD6;
+    --grad:linear-gradient(135deg,#7C58FA 0%,#4B2FD6 100%);
+    --grad-suave:linear-gradient(135deg,#F3EFFF 0%,#EAE3FF 100%);
+    --sucesso:#1E9E5A;
+    --alerta:#E6A100;
+    --erro:#D64545;
+    --info:#2F6FED;
+    --borda:#ECEBEF;
+    --sombra:0 8px 30px rgba(20,10,60,.10);
+    --raio:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;
+    color:var(--preto);
+    background:
+      radial-gradient(1200px 600px at 100% -10%, rgba(124,88,250,.18), transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, rgba(75,47,214,.14), transparent 55%),
+      #F6F5F9;
+    min-height:100dvh;
+    display:flex;align-items:center;justify-content:center;
+    padding:24px 16px;
+  }
+
+  .app{
+    width:100%;max-width:440px;
+    background:var(--branco);
+    border-radius:24px;
+    box-shadow:var(--sombra);
+    overflow:hidden;
+    position:relative;
+    min-height:640px;
+    display:flex;flex-direction:column;
+  }
+
+  /* ---------- HEADER ---------- */
+  .top{
+    background:var(--grad);
+    color:var(--branco);
+    padding:18px 20px 22px;
+    position:relative;
+  }
+  .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:.2px;font-size:15px}
+  .brand .dot{width:22px;height:22px;border-radius:7px;background:var(--branco);position:relative;flex:none}
+  .brand .dot::after{content:"";position:absolute;inset:6px;border-radius:3px;background:var(--roxo)}
+  .top .secure{display:flex;align-items:center;gap:6px;font-size:11px;opacity:.9;margin-top:14px}
+  .top .secure svg{width:13px;height:13px}
+
+  .order{
+    display:flex;align-items:flex-end;justify-content:space-between;margin-top:6px;
+  }
+  .order .label{font-size:12px;opacity:.85}
+  .order .val{font-size:30px;font-weight:700;line-height:1.1;letter-spacing:-.5px}
+  .order .merchant{font-size:12px;opacity:.85;margin-top:2px}
+
+  .backbar{display:flex;align-items:center;gap:10px;margin-bottom:10px;min-height:20px}
+  .back{
+    display:none;align-items:center;gap:6px;background:rgba(255,255,255,.16);
+    border:none;color:var(--branco);font-size:13px;font-family:inherit;
+    padding:6px 12px 6px 8px;border-radius:20px;cursor:pointer;font-weight:600;
+  }
+  .back svg{width:14px;height:14px}
+  .back:active{background:rgba(255,255,255,.28)}
+
+  /* ---------- BODY / SCREENS ---------- */
+  .body{flex:1;position:relative;overflow:hidden}
+  .screen{
+    position:absolute;inset:0;padding:22px 20px 24px;overflow-y:auto;
+    opacity:0;transform:translateX(24px);pointer-events:none;
+    transition:opacity .28s ease, transform .28s ease;
+  }
+  .screen.active{opacity:1;transform:none;pointer-events:auto}
+  @media (prefers-reduced-motion:reduce){.screen{transition:none}}
+
+  .h1{font-size:19px;font-weight:700;letter-spacing:-.3px}
+  .sub{font-size:13px;color:var(--cinza);margin-top:5px;line-height:1.5}
+
+  /* ---------- LISTA DE MÉTODOS ---------- */
+  .methods{margin-top:18px;display:flex;flex-direction:column;gap:10px}
+  .method{
+    display:flex;align-items:center;gap:14px;width:100%;text-align:left;
+    background:var(--branco);border:1px solid var(--borda);border-radius:14px;
+    padding:14px 15px;cursor:pointer;font-family:inherit;
+    transition:border-color .15s, transform .08s, box-shadow .15s;
+  }
+  .method:hover{border-color:var(--roxo);box-shadow:0 4px 16px rgba(124,88,250,.12)}
+  .method:active{transform:scale(.99)}
+  .method .ico{
+    width:auto;min-width:44px;height:32px;border-radius:8px;flex:none;
+    display:flex;align-items:center;justify-content:center;gap:3px;
+    background:#F4F3F7;overflow:hidden;padding:0 7px;
+  }
+  .brandslot{display:inline-flex;align-items:center;justify-content:center;position:relative}
+  .brandslot .bm{max-height:22px;max-width:38px;object-fit:contain;display:inline-block}
+  .brandslot .bmfb{display:none;align-items:center;justify-content:center}
+  .method .txt{flex:1;min-width:0}
+  .method .nm{font-size:14px;font-weight:600}
+  .method .ds{font-size:11.5px;color:var(--cinza);margin-top:2px}
+  .method .chev{color:var(--cinza-claro);flex:none}
+  .method .chev svg{width:18px;height:18px}
+  .tag{
+    font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 7px;border-radius:20px;
+    display:inline-block;vertical-align:middle;margin-left:6px;
+  }
+  .tag.inst{background:#EAF7EF;color:var(--sucesso)}
+  .tag.novo{background:#EEE9FF;color:var(--roxo-esc)}
+
+  /* ---------- CARTEIRAS DIGITAIS (topo) ---------- */
+  .wallet-title{font-size:14px;font-weight:700;margin-top:18px;margin-bottom:12px}
+  .wallet-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .wbtn{display:flex;align-items:center;justify-content:center;height:52px;border:1px solid var(--borda);border-radius:12px;background:#fff;cursor:pointer;padding:0 8px;transition:border-color .15s, box-shadow .15s, transform .08s}
+  .wbtn:hover{border-color:var(--roxo);box-shadow:0 4px 14px rgba(124,88,250,.12)}
+  .wbtn:active{transform:scale(.98)}
+  .wbtn .brandslot .bm{max-height:22px;max-width:100%}
+  .wbtn-ctp{gap:5px}
+  .wbtn-ctp .brandslot .bm{max-height:16px;max-width:30px}
+  .wsep{width:1px;height:16px;background:var(--borda);display:inline-block}
+  .nupay-btn{display:flex;align-items:center;justify-content:center;gap:8px;height:52px;width:100%;margin-top:10px;border:1px solid var(--borda);border-radius:12px;background:#fff;cursor:pointer;transition:border-color .15s, box-shadow .15s, transform .08s}
+  .nupay-btn:hover{border-color:#820AD1;box-shadow:0 4px 14px rgba(130,10,209,.12)}
+  .nupay-btn:active{transform:scale(.99)}
+  .nupay-btn .brandslot .bm{max-height:24px;max-width:120px}
+  .divider{display:flex;align-items:center;gap:12px;margin:18px 0;color:var(--cinza);font-size:12px;font-weight:600}
+  .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--borda)}
+
+  /* ---------- FORM ---------- */
+  .field{margin-top:14px}
+  .field label{display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:6px}
+  .input,select{
+    width:100%;font-family:inherit;font-size:15px;color:var(--preto);
+    padding:13px 14px;border:1px solid var(--borda);border-radius:12px;background:var(--branco);
+    outline:none;transition:border-color .15s, box-shadow .15s;
+  }
+  .input:focus,select:focus{border-color:var(--roxo);box-shadow:0 0 0 3px rgba(124,88,250,.15)}
+  .input.card{letter-spacing:1.5px}
+  .row2{display:flex;gap:12px}
+  .row2>*{flex:1}
+  .cardbrand{position:absolute;right:12px;top:34px;font-size:11px;font-weight:700;color:var(--cinza)}
+  .fieldwrap{position:relative}
+
+  /* ---------- BOTÕES ---------- */
+  .btn{
+    width:100%;font-family:inherit;font-size:15px;font-weight:700;color:var(--branco);
+    background:var(--grad);border:none;border-radius:14px;padding:15px;cursor:pointer;
+    margin-top:20px;transition:transform .08s, opacity .2s;display:flex;
+    align-items:center;justify-content:center;gap:9px;
+  }
+  .btn:active{transform:scale(.985)}
+  .btn:disabled{opacity:.55;cursor:not-allowed}
+  .btn.ghost{background:var(--branco);color:var(--roxo-esc);border:1.5px solid var(--roxo)}
+  .btn.dark{background:var(--preto)}
+  .btn svg{width:18px;height:18px}
+
+  .foot-secure{display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;color:var(--cinza);margin-top:16px}
+  .foot-secure svg{width:13px;height:13px}
+
+  /* ---------- WALLET SHEET (Google/Apple) ---------- */
+  .wallet{
+    border:1px solid var(--borda);border-radius:16px;padding:18px;margin-top:18px;background:#FBFBFD;
+  }
+  .wallet .line{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid var(--borda);font-size:13px}
+  .wallet .line:last-child{border-bottom:none}
+  .wallet .line .k{color:var(--cinza)}
+  .wallet .line .v{font-weight:600}
+  .biocircle{
+    width:78px;height:78px;border-radius:50%;margin:8px auto 4px;
+    display:flex;align-items:center;justify-content:center;
+    background:var(--grad-suave);border:2px solid var(--roxo);
+  }
+  .biocircle svg{width:38px;height:38px;color:var(--roxo-esc)}
+
+  /* ---------- PIX QR ---------- */
+  .qrbox{
+    width:210px;height:210px;margin:16px auto 6px;border-radius:16px;
+    background:var(--branco);border:1px solid var(--borda);padding:12px;
+    display:flex;align-items:center;justify-content:center;box-shadow:var(--sombra);
+  }
+  .qrbox svg{width:100%;height:100%}
+  .pixcode{
+    display:flex;gap:8px;margin-top:14px;
+  }
+  .pixcode input{flex:1;font-size:12px;color:#555;background:#F4F3F7;border:1px solid var(--borda);border-radius:11px;padding:12px;font-family:monospace}
+  .copybtn{background:var(--roxo);color:#fff;border:none;border-radius:11px;padding:0 16px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit}
+  .copybtn:active{background:var(--roxo-esc)}
+  .waiting{display:flex;align-items:center;justify-content:center;gap:9px;margin-top:16px;font-size:13px;color:var(--cinza)}
+  .pulse{width:9px;height:9px;border-radius:50%;background:var(--alerta);animation:pulse 1.2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+  /* ---------- BANCOS (Open Finance) ---------- */
+  .banks{display:flex;flex-direction:column;gap:9px;margin-top:16px}
+  .bank{display:flex;align-items:center;gap:13px;padding:13px 14px;border:1px solid var(--borda);border-radius:13px;cursor:pointer;background:#fff;transition:border-color .15s}
+  .bank:hover{border-color:var(--roxo)}
+  .bank .logo{width:38px;height:38px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:15px}
+  .bank .bn{flex:1;font-size:14px;font-weight:600}
+  .bank .chev{color:var(--cinza-claro)}
+
+  /* ---------- OTP (Click to Pay) ---------- */
+  .otp{display:flex;gap:10px;justify-content:center;margin-top:18px}
+  .otp input{width:46px;height:56px;text-align:center;font-size:22px;font-weight:700;border:1px solid var(--borda);border-radius:12px;font-family:inherit}
+  .otp input:focus{border-color:var(--roxo);box-shadow:0 0 0 3px rgba(124,88,250,.15);outline:none}
+  .savedcard{display:flex;align-items:center;gap:13px;padding:14px;border:1px solid var(--borda);border-radius:13px;margin-top:12px;cursor:pointer}
+  .savedcard.sel{border-color:var(--roxo);background:var(--grad-suave)}
+  .savedcard .cc{width:44px;height:30px;border-radius:6px;background:var(--preto);color:#fff;font-size:9px;display:flex;align-items:flex-end;justify-content:flex-end;padding:4px;font-weight:700}
+  .savedcard .info{flex:1}
+  .savedcard .info .n{font-size:13px;font-weight:600}
+  .savedcard .info .e{font-size:11px;color:var(--cinza)}
+  .radio{width:20px;height:20px;border-radius:50%;border:2px solid var(--cinza-claro)}
+  .savedcard.sel .radio{border-color:var(--roxo);background:var(--roxo);box-shadow:inset 0 0 0 3px #fff}
+
+  /* ---------- PROCESSANDO ---------- */
+  .center-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:20px}
+  .spinner{width:52px;height:52px;border-radius:50%;border:4px solid #EEE9FF;border-top-color:var(--roxo);animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .step-info{font-size:13px;color:var(--cinza);margin-top:16px;min-height:20px}
+
+  /* ---------- SUCESSO ---------- */
+  .check{width:88px;height:88px;border-radius:50%;background:var(--grad);display:flex;align-items:center;justify-content:center;margin-bottom:22px;animation:pop .4s ease}
+  @keyframes pop{0%{transform:scale(.4);opacity:0}100%{transform:scale(1);opacity:1}}
+  .check svg{width:44px;height:44px;color:#fff}
+  .succ-val{font-size:26px;font-weight:700;margin-top:4px}
+  .receipt{width:100%;border:1px dashed var(--borda);border-radius:13px;padding:14px;margin-top:20px;text-align:left}
+  .receipt .r{display:flex;justify-content:space-between;font-size:12.5px;padding:5px 0}
+  .receipt .r .k{color:var(--cinza)}
+  .receipt .r .v{font-weight:600}
+
+  .note-info{background:#EAF1FF;color:#1b4fb0;font-size:11.5px;padding:10px 12px;border-radius:10px;margin-top:14px;line-height:1.45;display:flex;gap:8px}
+  .note-info svg{width:15px;height:15px;flex:none;margin-top:1px}
+
+  .instag{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--cinza);margin-top:10px}
+  .instag b{color:var(--preto)}
+
+  /* ---------- DOIS CARTÕES ---------- */
+  .split{background:var(--grad-suave);border-radius:14px;padding:14px;margin-top:16px}
+  .split .sr{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
+  .split .sr label,.split .sr .sl{font-size:12px;font-weight:600;color:#4a4a4a}
+  .split .sr input{width:120px;text-align:right;font-size:14px;font-weight:600;padding:9px 11px;border:1px solid var(--borda);border-radius:10px;font-family:inherit;background:#fff}
+  .split .sr input:focus{border-color:var(--roxo);box-shadow:0 0 0 3px rgba(124,88,250,.15);outline:none}
+  .split .amt2{font-size:15px;font-weight:700;color:var(--roxo-esc)}
+  .splitbar{height:8px;border-radius:6px;background:#DCD3FF;overflow:hidden;margin-top:2px}
+  .splitbar>div{height:100%;background:var(--roxo);width:50%;transition:width .2s}
+  .cardgroup{border:1px solid var(--borda);border-radius:14px;padding:2px 14px 14px;margin-top:14px}
+  .cardgroup .gh{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:700;margin-top:14px}
+  .cardgroup .gh .num{width:22px;height:22px;border-radius:50%;background:var(--grad);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;flex:none}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ HEADER ============ -->
+  <div class="top">
+    <div class="backbar">
+      <button class="back" id="backBtn" onclick="goBack()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+        Voltar
+      </button>
+    </div>
+    <div class="brand"><span class="dot"></span> Multipagamentos</div>
+    <div class="order">
+      <div>
+        <div class="label">Total a pagar</div>
+        <div class="val">R$ 249,90</div>
+        <div class="merchant">Loja Exemplo · Pedido #48213</div>
+      </div>
+    </div>
+    <div class="secure">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      Ambiente seguro · dados criptografados
+    </div>
+  </div>
+
+  <!-- ============ CORPO ============ -->
+  <div class="body">
+
+    <!-- TELA 0 · OPÇÕES ------------------------------------------------ -->
+    <section class="screen active" id="s-options">
+      <div class="h1">Como você quer pagar?</div>
+      <div class="wallet-title">Pague com carteiras digitais</div>
+      <div class="wallet-row" id="walletRow"></div>
+      <div id="nupayRow"></div>
+      <div class="divider">ou</div>
+      <div class="methods" id="methodList"></div>
+      <div class="foot-secure">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        Pagamento processado pela Multipagamentos
+      </div>
+    </section>
+
+    <!-- TELA · CARTÃO DE CRÉDITO --------------------------------------- -->
+    <section class="screen" id="s-card">
+      <div class="h1">Cartão de crédito</div>
+      <div class="sub">Preencha os dados do cartão. A cobrança passa por antifraude e autenticação 3DS.</div>
+      <div class="fieldwrap field">
+        <label>Número do cartão</label>
+        <input class="input card" id="ccNum" inputmode="numeric" placeholder="0000 0000 0000 0000" maxlength="19" oninput="fmtCard(this)">
+        <span class="cardbrand" id="ccBrand"></span>
+      </div>
+      <div class="field">
+        <label>Nome impresso no cartão</label>
+        <input class="input" id="ccName" placeholder="Como está no cartão" oninput="checkCard()">
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label>Validade</label>
+          <input class="input" id="ccExp" inputmode="numeric" placeholder="MM/AA" maxlength="5" oninput="fmtExp(this)">
+        </div>
+        <div class="field">
+          <label>CVV</label>
+          <input class="input" id="ccCvv" inputmode="numeric" placeholder="123" maxlength="4" oninput="checkCard()">
+        </div>
+      </div>
+      <div class="field">
+        <label>Parcelamento</label>
+        <select id="ccInst">
+          <option>1x de R$ 249,90 sem juros</option>
+          <option>2x de R$ 124,95 sem juros</option>
+          <option>3x de R$ 83,30 sem juros</option>
+          <option>6x de R$ 43,90 (c/ juros)</option>
+          <option>12x de R$ 23,40 (c/ juros)</option>
+        </select>
+      </div>
+      <button class="btn" id="ccPay" disabled onclick="processar('card','Autenticando 3D Secure…','Cartão de crédito')">
+        Pagar R$ 249,90
+      </button>
+      <div class="foot-secure">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        Não armazenamos o CVV · tokenização Card on File
+      </div>
+    </section>
+
+    <!-- TELA · DOIS CARTÕES DE CRÉDITO -------------------------------- -->
+    <section class="screen" id="s-card2">
+      <div class="h1">Dois cartões de crédito</div>
+      <div class="sub">Divida o total entre dois cartões. Cada cartão recebe uma autorização separada; a transação só é confirmada se ambas forem aprovadas.</div>
+
+      <div class="split">
+        <div class="sr">
+          <label>Valor no cartão 1</label>
+          <input id="split1" inputmode="numeric" value="124,95" oninput="splitChange(this)">
+        </div>
+        <div class="sr">
+          <span class="sl">Valor no cartão 2</span>
+          <span class="amt2" id="split2">R$ 124,95</span>
+        </div>
+        <div class="splitbar"><div id="splitBar"></div></div>
+      </div>
+
+      <!-- Cartão 1 -->
+      <div class="cardgroup">
+        <div class="gh"><span class="num">1</span> Cartão 1</div>
+        <div class="fieldwrap field">
+          <label>Número do cartão</label>
+          <input class="input card" id="c2aNum" inputmode="numeric" placeholder="0000 0000 0000 0000" maxlength="19" oninput="fmt2(this,'c2aBrand')">
+          <span class="cardbrand" id="c2aBrand"></span>
+        </div>
+        <div class="field"><label>Nome impresso</label><input class="input" id="c2aName" placeholder="Como está no cartão" oninput="check2()"></div>
+        <div class="row2">
+          <div class="field"><label>Validade</label><input class="input" id="c2aExp" inputmode="numeric" placeholder="MM/AA" maxlength="5" oninput="fmtExp2(this)"></div>
+          <div class="field"><label>CVV</label><input class="input" id="c2aCvv" inputmode="numeric" placeholder="123" maxlength="4" oninput="check2()"></div>
+        </div>
+      </div>
+
+      <!-- Cartão 2 -->
+      <div class="cardgroup">
+        <div class="gh"><span class="num">2</span> Cartão 2</div>
+        <div class="fieldwrap field">
+          <label>Número do cartão</label>
+          <input class="input card" id="c2bNum" inputmode="numeric" placeholder="0000 0000 0000 0000" maxlength="19" oninput="fmt2(this,'c2bBrand')">
+          <span class="cardbrand" id="c2bBrand"></span>
+        </div>
+        <div class="field"><label>Nome impresso</label><input class="input" id="c2bName" placeholder="Como está no cartão" oninput="check2()"></div>
+        <div class="row2">
+          <div class="field"><label>Validade</label><input class="input" id="c2bExp" inputmode="numeric" placeholder="MM/AA" maxlength="5" oninput="fmtExp2(this)"></div>
+          <div class="field"><label>CVV</label><input class="input" id="c2bCvv" inputmode="numeric" placeholder="123" maxlength="4" oninput="check2()"></div>
+        </div>
+      </div>
+
+      <button class="btn" id="c2Pay" disabled onclick="processar('card2','Autorizando cartão 1…','Dois cartões de crédito')">Pagar R$ 249,90</button>
+      <div class="foot-secure">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        Se um cartão falhar, o outro é estornado automaticamente
+      </div>
+    </section>
+
+    <!-- TELA · GOOGLE PAY ---------------------------------------------- -->
+    <section class="screen" id="s-gpay">
+      <div class="h1">Google Pay</div>
+      <div class="sub">Confirme o pagamento com um cartão salvo na sua conta Google.</div>
+      <div class="wallet">
+        <div class="line"><span class="k">Cartão</span><span class="v">•••• 4821 · Visa</span></div>
+        <div class="line"><span class="k">Conta</span><span class="v">voce@gmail.com</span></div>
+        <div class="line"><span class="k">Valor</span><span class="v">R$ 249,90</span></div>
+      </div>
+      <div class="note-info">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        O cartão é enviado como token da carteira. A Multipagamentos processa via adquirente sem expor o número real.
+      </div>
+      <button class="btn dark" onclick="processar('gpay','Confirmando na carteira Google…','Google Pay')">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 15l-4-4 1.4-1.4L12 14.2l4.6-4.6L18 11z"/></svg>
+        Pagar com Google Pay
+      </button>
+    </section>
+
+    <!-- TELA · APPLE PAY ----------------------------------------------- -->
+    <section class="screen" id="s-apay">
+      <div class="h1">Apple Pay</div>
+      <div class="sub">Autentique com Face ID ou Touch ID para concluir.</div>
+      <div class="wallet">
+        <div class="line"><span class="k">Cartão</span><span class="v">•••• 7702 · Mastercard</span></div>
+        <div class="line"><span class="k">Dispositivo</span><span class="v">iPhone de Você</span></div>
+        <div class="line"><span class="k">Valor</span><span class="v">R$ 249,90</span></div>
+      </div>
+      <div class="biocircle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 11a3 3 0 013 3v1M12 11a3 3 0 00-3 3v3M5 9a9 9 0 0114 0M8 6a5 5 0 018 0M12 17v2"/></svg>
+      </div>
+      <div style="text-align:center;font-size:12px;color:var(--cinza)">Confirme com Face ID</div>
+      <button class="btn dark" onclick="processar('apay','Verificando Face ID…','Apple Pay')">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 3c-1 .1-2.2.7-2.9 1.5-.6.7-1.2 1.8-1 2.9 1.1.1 2.2-.6 2.9-1.4.6-.8 1.1-1.9 1-3zm2.5 6.5c-1.4-.1-2.6.8-3.2.8-.7 0-1.7-.8-2.8-.8-1.5 0-2.8.9-3.6 2.2-1.5 2.7-.4 6.6 1.1 8.8.7 1 1.6 2.2 2.7 2.2 1.1 0 1.5-.7 2.8-.7s1.6.7 2.8.7 1.9-1 2.6-2c.8-1.2 1.2-2.3 1.2-2.4 0 0-2.3-.9-2.3-3.5 0-2.2 1.8-3.2 1.9-3.3-1-1.5-2.6-1.7-3.2-1.7z"/></svg>
+        Pagar com Apple Pay
+      </button>
+    </section>
+
+    <!-- TELA · VISA PIX BIOMETRIA (VPP) -------------------------------- -->
+    <section class="screen" id="s-vpix">
+      <div class="h1">Visa Pix · Biometria</div>
+      <div class="sub">Pague por Pix autenticando com biometria do dispositivo (Visa Payment Passkey / FIDO). Sem senha, sem app externo.</div>
+      <div class="wallet">
+        <div class="line"><span class="k">Método</span><span class="v">Pix via Visa</span></div>
+        <div class="line"><span class="k">Passkey</span><span class="v">Registrada neste aparelho</span></div>
+        <div class="line"><span class="k">Valor</span><span class="v">R$ 249,90</span></div>
+      </div>
+      <div class="biocircle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 4a8 8 0 018 8M12 8a4 4 0 014 4M6 12a6 6 0 016-6M8 18c-1-1.5-1.5-3-1.5-5M12 12v3c0 1 .3 2 .8 3M16 14c.3 2 .1 3.5-.5 5"/></svg>
+      </div>
+      <div style="text-align:center;font-size:12px;color:var(--cinza)">Toque no sensor para confirmar</div>
+      <button class="btn" onclick="processar('vpix','Autenticando com biometria…','Visa Pix Biometria')">
+        Confirmar com biometria
+      </button>
+      <div class="note-info">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        Liquidação Pix instantânea com autenticação forte nativa — reduz fricção e aumenta a taxa de aprovação.
+      </div>
+    </section>
+
+    <!-- TELA · PIX OPEN FINANCE (PISP) — passo 1: escolher banco ------- -->
+    <section class="screen" id="s-ofbank">
+      <div class="h1">Pix · Open Finance</div>
+      <div class="sub">Escolha seu banco. Você autoriza o pagamento direto no app, sem digitar chave nem copiar código.</div>
+      <div class="banks">
+        <div class="bank" onclick="ofAuthorize('Nubank','#820AD1')"><div class="logo" style="background:#820AD1">nu</div><div class="bn">Nubank</div><span class="chev">›</span></div>
+        <div class="bank" onclick="ofAuthorize('Itaú','#EC7000')"><div class="logo" style="background:#EC7000">it</div><div class="bn">Itaú</div><span class="chev">›</span></div>
+        <div class="bank" onclick="ofAuthorize('Bradesco','#CC092F')"><div class="logo" style="background:#CC092F">br</div><div class="bn">Bradesco</div><span class="chev">›</span></div>
+        <div class="bank" onclick="ofAuthorize('Banco do Brasil','#F9DD16')"><div class="logo" style="background:#F9DD16;color:#003399">bb</div><div class="bn">Banco do Brasil</div><span class="chev">›</span></div>
+        <div class="bank" onclick="ofAuthorize('Caixa','#0070AF')"><div class="logo" style="background:#0070AF">cx</div><div class="bn">Caixa</div><span class="chev">›</span></div>
+      </div>
+    </section>
+
+    <!-- TELA · PIX OPEN FINANCE — passo 2: autorização no banco -------- -->
+    <section class="screen" id="s-ofauth">
+      <div class="center-state">
+        <div class="logo" id="ofLogo" style="width:60px;height:60px;border-radius:16px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:22px;margin-bottom:18px">nu</div>
+        <div class="h1" id="ofTitle">Autorize no seu banco</div>
+        <div class="sub" style="max-width:280px">Você foi redirecionado para o ambiente seguro do banco. Confirme o pagamento de <b>R$ 249,90</b> para prosseguir.</div>
+        <div class="receipt" style="border-style:solid">
+          <div class="r"><span class="k">Recebedor</span><span class="v">Loja Exemplo</span></div>
+          <div class="r"><span class="k">Valor</span><span class="v">R$ 249,90</span></div>
+          <div class="r"><span class="k">Tipo</span><span class="v">Pix Automático · Open Finance</span></div>
+        </div>
+        <button class="btn" onclick="processar('pixof','Confirmando com o banco…','Pix Open Finance')">Autorizar pagamento</button>
+        <button class="btn ghost" style="margin-top:10px" onclick="showScreen('s-ofbank')">Trocar de banco</button>
+      </div>
+    </section>
+
+    <!-- TELA · PIX COPIA E COLA ---------------------------------------- -->
+    <section class="screen" id="s-pixqr">
+      <div class="h1">Pix · Copia e Cola</div>
+      <div class="sub">Escaneie o QR Code no app do seu banco ou copie o código. A confirmação é automática.</div>
+      <div class="qrbox">
+        <svg viewBox="0 0 100 100" shape-rendering="crispEdges" id="qrSvg"></svg>
+      </div>
+      <div class="pixcode">
+        <input id="pixText" readonly value="00020126580014br.gov.bcb.pix0136a1b2c3d4-mp-checkout52040000530398654042499005802BR6009SAO PAULO62070503***6304AB12">
+        <button class="copybtn" onclick="copyPix(this)">Copiar</button>
+      </div>
+      <div class="waiting" id="pixWait"><span class="pulse"></span> Aguardando pagamento…</div>
+      <button class="btn ghost" onclick="processar('pixcc','Confirmando recebimento…','Pix Copia e Cola')">Já paguei</button>
+      <div class="instag">Expira em <b>29:58</b></div>
+    </section>
+
+    <!-- TELA · CLICK TO PAY — passo 1: e-mail -------------------------- -->
+    <section class="screen" id="s-ctp-mail">
+      <div class="h1">Click to Pay</div>
+      <div class="sub">Pague com seus cartões já cadastrados nas bandeiras, sem redigitar dados. Informe o e-mail da sua conta.</div>
+      <div class="field">
+        <label>E-mail</label>
+        <input class="input" id="ctpMail" type="email" placeholder="voce@email.com" oninput="ctpCheck()">
+      </div>
+      <button class="btn" id="ctpNext" disabled onclick="showScreen('s-ctp-otp')">Continuar</button>
+      <div class="note-info">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        Padrão global das bandeiras (Visa, Mastercard, Elo). Seus cartões são reconhecidos entre lojas participantes.
+      </div>
+    </section>
+
+    <!-- TELA · CLICK TO PAY — passo 2: OTP ----------------------------- -->
+    <section class="screen" id="s-ctp-otp">
+      <div class="h1">Confirme que é você</div>
+      <div class="sub">Enviamos um código de 4 dígitos para o seu e-mail. Digite-o abaixo.</div>
+      <div class="otp" id="otpBox">
+        <input inputmode="numeric" maxlength="1" oninput="otpMove(this,0)">
+        <input inputmode="numeric" maxlength="1" oninput="otpMove(this,1)">
+        <input inputmode="numeric" maxlength="1" oninput="otpMove(this,2)">
+        <input inputmode="numeric" maxlength="1" oninput="otpMove(this,3)">
+      </div>
+      <button class="btn" id="otpNext" disabled onclick="showScreen('s-ctp-card')">Validar código</button>
+      <div style="text-align:center;font-size:12px;color:var(--cinza);margin-top:14px">Não recebeu? <b style="color:var(--roxo-esc)">Reenviar</b></div>
+    </section>
+
+    <!-- TELA · CLICK TO PAY — passo 3: escolher cartão ----------------- -->
+    <section class="screen" id="s-ctp-card">
+      <div class="h1">Seus cartões</div>
+      <div class="sub">Selecione o cartão para concluir o pagamento.</div>
+      <div class="savedcard sel" onclick="selCard(this)"><div class="cc">VISA</div><div class="info"><div class="n">Visa •••• 4821</div><div class="e">Vence 08/29</div></div><div class="radio"></div></div>
+      <div class="savedcard" onclick="selCard(this)"><div class="cc">MC</div><div class="info"><div class="n">Mastercard •••• 7702</div><div class="e">Vence 03/28</div></div><div class="radio"></div></div>
+      <div class="savedcard" onclick="selCard(this)"><div class="cc">ELO</div><div class="info"><div class="n">Elo •••• 3390</div><div class="e">Vence 11/27</div></div><div class="radio"></div></div>
+      <button class="btn" onclick="processar('ctp','Autorizando com a bandeira…','Click to Pay')">Pagar R$ 249,90</button>
+    </section>
+
+    <!-- TELA · NUPAY — passo 1: qualificação/QR ------------------------ -->
+    <section class="screen" id="s-nupay">
+      <div class="h1">NuPay</div>
+      <div class="sub">Pague com o saldo ou o crédito do seu Nubank. Abra o app e confirme — sem chargeback, com autenticação dentro do Nubank.</div>
+      <div class="qrbox">
+        <svg viewBox="0 0 100 100" shape-rendering="crispEdges" id="nuQr"></svg>
+      </div>
+      <div style="text-align:center;font-size:12px;color:var(--cinza)">Escaneie com o app do Nubank</div>
+      <button class="btn" style="background:#820AD1" onclick="processar('nupay','Aguardando confirmação no Nubank…','NuPay')">Abrir app do Nubank</button>
+      <div class="note-info">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        A qualificação verifica limite/saldo antes de exibir o método. Aprovação e antifraude ocorrem no próprio Nubank.
+      </div>
+    </section>
+
+    <!-- TELA · PROCESSANDO --------------------------------------------- -->
+    <section class="screen" id="s-proc">
+      <div class="center-state">
+        <div class="spinner"></div>
+        <div class="h1" style="margin-top:24px">Processando pagamento</div>
+        <div class="step-info" id="procStep">Iniciando…</div>
+      </div>
+    </section>
+
+    <!-- TELA · SUCESSO ------------------------------------------------- -->
+    <section class="screen" id="s-success">
+      <div class="center-state">
+        <div class="check">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>
+        </div>
+        <div class="h1">Pagamento aprovado</div>
+        <div class="succ-val">R$ 249,90</div>
+        <div class="receipt">
+          <div class="r"><span class="k">Forma de pagamento</span><span class="v" id="rMethod">—</span></div>
+          <div class="r"><span class="k">Pedido</span><span class="v">#48213</span></div>
+          <div class="r"><span class="k">Autorização</span><span class="v" id="rAuth">—</span></div>
+          <div class="r"><span class="k">Status</span><span class="v" style="color:var(--sucesso)">Confirmado</span></div>
+        </div>
+        <button class="btn ghost" onclick="resetAll()">Voltar ao início</button>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script>
+/* =====================================================================
+   ÍCONES OFICIAIS DAS MARCAS (definir ANTES de METHODS)
+   ---------------------------------------------------------------------
+   Os logos são MARCAS REGISTRADAS. A aplicação carrega os arquivos
+   oficiais da pasta ./brands/ e usa um fallback neutro se não existirem.
+   Onde baixar (ver FONTES-ICONES-OFICIAIS.md):
+   - visa.svg ......... brand.visa.com
+   - mastercard.svg ... brand.mastercard.com/brandcenter → Download artwork
+   - elo.svg .......... elo.com.br / portal do desenvolvedor Elo
+   - googlepay.svg .... developers.google.com/pay/api/web/guides/brand-guidelines
+   - applepay.svg ..... developer.apple.com/apple-pay/marketing
+   - pix.svg .......... bcb.gov.br → Manual de Uso da Marca Pix
+   - clicktopay.svg ... emvco.com/trademark-centre (licença EMVCo)
+   - nupay.svg ........ building.nubank.com/nu-brand-system + kit do PSP
+   ===================================================================== */
+const BRAND_DIR = 'brands/';
+function bmFail(img){ img.style.display='none'; img.nextElementSibling.style.display='inline-flex'; }
+function slot(file, alt, fb){
+  return `<span class="brandslot"><img class="bm" src="${BRAND_DIR}${file}" alt="${alt}" onerror="bmFail(this)"><span class="bmfb">${fb}</span></span>`;
+}
+
+/* Fallbacks neutros (usados só enquanto o asset oficial não está presente) */
+const fbVisa = `<span style="font-weight:800;font-style:italic;color:#1A1F71;font-size:12px">VISA</span>`;
+const fbMc   = `<span style="display:flex"><span style="width:13px;height:13px;border-radius:50%;background:#EB001B"></span><span style="width:13px;height:13px;border-radius:50%;background:#F79E1B;margin-left:-6px;opacity:.9"></span></span>`;
+const fbElo  = `<span style="font-weight:800;color:#333;font-size:12px">elo</span>`;
+const fbGP   = `<span style="font-weight:700;font-size:11px"><span style="color:#4285F4">G</span><span style="color:#EA4335">o</span><span style="color:#FBBC05">o</span><span style="color:#4285F4">g</span><span style="color:#34A853">l</span><span style="color:#EA4335">e</span> <span style="color:#5F6368">Pay</span></span>`;
+const fbAP   = `<span style="font-weight:600;font-size:12px;color:#000"> Pay</span>`;
+const fbPix  = `<svg width="22" height="22" viewBox="0 0 24 24" fill="#32BCAD"><path d="M12 2l3.5 3.5L12 9 8.5 5.5 12 2zm-6.5 6.5L9 12l-3.5 3.5L2 12l3.5-3.5zm13 0L22 12l-3.5 3.5L15 12l3.5-3.5zM12 15l3.5 3.5L12 22l-3.5-3.5L12 15z"/></svg>`;
+const fbCTP  = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#EB6C1E" stroke-width="1.8"><path d="M13 2L4.5 12.5H11l-1 9.5 8.5-11H12z"/></svg>`;
+const fbNu   = `<span style="width:28px;height:20px;background:#820AD1;border-radius:5px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:11px;font-style:italic">nu</span>`;
+
+/* Ícones por método (podem combinar várias marcas) */
+function iconCard(){ return slot('visa.svg','Visa',fbVisa)+slot('mastercard.svg','Mastercard',fbMc)+slot('elo.svg','Elo',fbElo); }
+function iconCard2(){ return iconCard(); }
+function iconGPay(){ return slot('googlepay.svg','Google Pay',fbGP); }
+function iconAPay(){ return slot('applepay.svg','Apple Pay',fbAP); }
+function iconPix(){ return slot('pix.svg','Pix',fbPix); }
+function iconVPix(){ return slot('visa.svg','Visa',fbVisa)+slot('pix.svg','Pix',fbPix); }
+function iconCTP(){ return slot('clicktopay.svg','Click to Pay',fbCTP); }
+function iconNu(){ return slot('nupay.svg','NuPay',fbNu); }
+
+/* slot a partir de URL absoluta (usado no NuPay, asset externo) */
+function slotSrc(src, alt, fb){
+  return `<span class="brandslot"><img class="bm" src="${src}" alt="${alt}" onerror="bmFail(this)"><span class="bmfb">${fb}</span></span>`;
+}
+
+/* Marcas dos botões de carteira (topo) */
+const markGP  = slot('googlepay.svg','Google Pay',fbGP);
+const markAP  = slot('applepay.svg','Apple Pay',fbAP);
+const markCTP = slot('clicktopay.svg','Click to Pay',fbCTP)+`<span class="wsep"></span>`+slot('visa.svg','Visa',fbVisa)+slot('mastercard.svg','Mastercard',fbMc);
+const markNu  = slotSrc('https://logospng.org/wp-content/uploads/nupay.png','NuPay',fbNu);
+
+/* ---------- Definição dos métodos (painel do lojista controla o que aparece) ---------- */
+/* group: 'wallet' (topo) · 'nupay' (botão abaixo) · 'list' (lista com "ou") */
+const METHODS = [
+  {id:'gpay',  group:'wallet', screen:'s-gpay',     nm:'Google Pay',  mark:markGP},
+  {id:'apay',  group:'wallet', screen:'s-apay',     nm:'Apple Pay',   mark:markAP},
+  {id:'ctp',   group:'wallet', screen:'s-ctp-mail', nm:'Click to Pay',mark:markCTP, cls:'wbtn-ctp'},
+  {id:'nupay', group:'nupay',  screen:'s-nupay',    nm:'NuPay',       mark:markNu},
+  {id:'card',  group:'list', screen:'s-card',     nm:'Cartão de crédito', ds:'Crédito à vista ou parcelado · 3DS + antifraude', tag:null,   ico:iconCard()},
+  {id:'card2', group:'list', screen:'s-card2',    nm:'Dois cartões de crédito', ds:'Divida o valor entre dois cartões',           tag:null,   ico:iconCard2()},
+  {id:'vpix',  group:'list', screen:'s-vpix',     nm:'Visa Pix · Biometria', ds:'Pix autenticado por biometria (Passkey)',        tag:'novo', ico:iconVPix()},
+  {id:'pixof', group:'list', screen:'s-ofbank',   nm:'Pix · Open Finance', ds:'Autoriza direto no app do banco',                  tag:'inst', ico:iconPix()},
+  {id:'pixcc', group:'list', screen:'s-pixqr',    nm:'Pix · Copia e Cola', ds:'QR Code ou código copia e cola',                   tag:'inst', ico:iconPix()},
+];
+
+/* ---------- Navegação ---------- */
+let stack = ['s-options'];
+const backBtn = document.getElementById('backBtn');
+
+function showScreen(id, push=true){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  const el = document.getElementById(id);
+  el.classList.add('active');
+  el.scrollTop = 0;
+  if(push && stack[stack.length-1] !== id) stack.push(id);
+  backBtn.style.display = (id==='s-options'||id==='s-proc'||id==='s-success') ? 'none' : 'inline-flex';
+}
+function goBack(){
+  if(stack.length>1){ stack.pop(); showScreen(stack[stack.length-1], false); }
+}
+function resetAll(){
+  stack=['s-options'];
+  showScreen('s-options', false);
+  // limpa campos
+  ['ccNum','ccName','ccExp','ccCvv','ctpMail','c2aNum','c2aName','c2aExp','c2aCvv','c2bNum','c2bName','c2bExp','c2bCvv'].forEach(i=>{const e=document.getElementById(i); if(e)e.value='';});
+  document.getElementById('ccBrand').textContent='';
+  document.getElementById('ccPay').disabled=true;
+  ['c2aBrand','c2bBrand'].forEach(i=>document.getElementById(i).textContent='');
+  document.getElementById('split1').value='124,95';
+  document.getElementById('split2').textContent='R$ 124,95';
+  document.getElementById('splitBar').style.width='50%';
+  document.getElementById('c2Pay').disabled=true;
+  document.getElementById('ctpNext').disabled=true;
+  document.querySelectorAll('#otpBox input').forEach(i=>i.value='');
+  document.getElementById('otpNext').disabled=true;
+}
+
+/* ---------- Monta as opções de pagamento ---------- */
+const list = document.getElementById('methodList');
+const walletRow = document.getElementById('walletRow');
+const nupayRow = document.getElementById('nupayRow');
+
+METHODS.forEach(m=>{
+  if(m.group==='wallet'){
+    const b=document.createElement('button');
+    b.className='wbtn'+(m.cls?(' '+m.cls):'');
+    b.setAttribute('aria-label',m.nm);
+    b.onclick=()=>showScreen(m.screen);
+    b.innerHTML=m.mark;
+    walletRow.appendChild(b);
+  } else if(m.group==='nupay'){
+    const b=document.createElement('button');
+    b.className='nupay-btn';
+    b.setAttribute('aria-label',m.nm);
+    b.onclick=()=>showScreen(m.screen);
+    b.innerHTML=m.mark;
+    nupayRow.appendChild(b);
+  } else {
+    const b=document.createElement('button');
+    b.className='method';
+    b.onclick=()=>showScreen(m.screen);
+    let tagHtml='';
+    if(m.tag==='inst') tagHtml='<span class="tag inst">Aprovação imediata</span>';
+    if(m.tag==='novo') tagHtml='<span class="tag novo">Novo</span>';
+    b.innerHTML=`<span class="ico">${m.ico}</span>
+      <span class="txt"><span class="nm">${m.nm}${tagHtml}</span><span class="ds">${m.ds}</span></span>
+      <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 6l6 6-6 6"/></svg></span>`;
+    list.appendChild(b);
+  }
+});
+
+/* ---------- Fluxo de processamento genérico ---------- */
+function processar(method, firstStep, methodLabel){
+  showScreen('s-proc');
+  const step=document.getElementById('procStep');
+  const seq={
+    card:  [firstStep,'Enviando ao adquirente…','Confirmando autorização…'],
+    card2: [firstStep,'Autorizando cartão 2…','Consolidando as duas transações…'],
+    gpay:  [firstStep,'Descriptografando token…','Autorizando no adquirente…'],
+    apay:  [firstStep,'Validando token da carteira…','Autorizando no adquirente…'],
+    vpix:  [firstStep,'Gerando Pix autenticado…','Liquidando via Pix…'],
+    pixof: [firstStep,'Recebendo confirmação Open Finance…','Liquidando via Pix…'],
+    pixcc: [firstStep,'Verificando liquidação Pix…'],
+    ctp:   [firstStep,'Validando na bandeira…','Confirmando autorização…'],
+    nupay: [firstStep,'Confirmando no Nubank…','Concluindo pagamento…'],
+  }[method] || [firstStep];
+  let i=0; step.textContent=seq[0];
+  const tick=setInterval(()=>{
+    i++;
+    if(i<seq.length){ step.textContent=seq[i]; }
+    else{
+      clearInterval(tick);
+      document.getElementById('rMethod').textContent=methodLabel;
+      document.getElementById('rAuth').textContent='A'+Math.floor(100000+Math.random()*899999);
+      stack=['s-success'];
+      showScreen('s-success', false);
+    }
+  }, 900);
+}
+
+/* ---------- Cartão: formatação e validação ---------- */
+function fmtCard(el){
+  let v=el.value.replace(/\D/g,'').slice(0,16);
+  el.value=v.replace(/(.{4})/g,'$1 ').trim();
+  const b=document.getElementById('ccBrand');
+  if(/^4/.test(v)) b.textContent='VISA';
+  else if(/^5[1-5]/.test(v)||/^2[2-7]/.test(v)) b.textContent='MASTERCARD';
+  else if(/^(4011|4312|5041|5067|6277|6362|6363|650)/.test(v)) b.textContent='ELO';
+  else if(/^3[47]/.test(v)) b.textContent='AMEX';
+  else b.textContent='';
+  checkCard();
+}
+function fmtExp(el){
+  let v=el.value.replace(/\D/g,'').slice(0,4);
+  if(v.length>2) v=v.slice(0,2)+'/'+v.slice(2);
+  el.value=v; checkCard();
+}
+function checkCard(){
+  const num=document.getElementById('ccNum').value.replace(/\s/g,'');
+  const name=document.getElementById('ccName').value.trim();
+  const exp=document.getElementById('ccExp').value;
+  const cvv=document.getElementById('ccCvv').value;
+  const ok = num.length>=13 && name.length>=3 && /^\d{2}\/\d{2}$/.test(exp) && cvv.length>=3;
+  document.getElementById('ccPay').disabled=!ok;
+}
+
+/* ---------- Dois cartões: divisão de valor e validação ---------- */
+const TOTAL=249.90;
+const brl=v=>'R$ '+v.toFixed(2).replace('.',',');
+function splitChange(el){
+  let cents=parseInt(el.value.replace(/\D/g,'')||'0',10);
+  let v1=cents/100;
+  if(v1>TOTAL) v1=TOTAL;
+  el.value=v1.toFixed(2).replace('.',',');
+  const v2=TOTAL-v1;
+  document.getElementById('split2').textContent=brl(v2);
+  document.getElementById('splitBar').style.width=(v1/TOTAL*100)+'%';
+  check2();
+}
+function fmt2(el,brandId){
+  let v=el.value.replace(/\D/g,'').slice(0,16);
+  el.value=v.replace(/(.{4})/g,'$1 ').trim();
+  const b=document.getElementById(brandId);
+  if(/^4/.test(v)) b.textContent='VISA';
+  else if(/^5[1-5]/.test(v)||/^2[2-7]/.test(v)) b.textContent='MASTERCARD';
+  else if(/^(4011|4312|5041|5067|6277|6362|6363|650)/.test(v)) b.textContent='ELO';
+  else if(/^3[47]/.test(v)) b.textContent='AMEX';
+  else b.textContent='';
+  check2();
+}
+function fmtExp2(el){
+  let v=el.value.replace(/\D/g,'').slice(0,4);
+  if(v.length>2) v=v.slice(0,2)+'/'+v.slice(2);
+  el.value=v; check2();
+}
+function check2(){
+  const grp=p=>{
+    const num=document.getElementById(p+'Num').value.replace(/\s/g,'');
+    const name=document.getElementById(p+'Name').value.trim();
+    const exp=document.getElementById(p+'Exp').value;
+    const cvv=document.getElementById(p+'Cvv').value;
+    return num.length>=13 && name.length>=3 && /^\d{2}\/\d{2}$/.test(exp) && cvv.length>=3;
+  };
+  const v1=parseInt((document.getElementById('split1').value.replace(/\D/g,'')||'0'),10)/100;
+  const amtOk = v1>0 && v1<TOTAL;
+  document.getElementById('c2Pay').disabled = !(grp('c2a') && grp('c2b') && amtOk);
+}
+document.getElementById('splitBar').style.width='50%';
+
+/* ---------- Open Finance: autorização ---------- */
+function ofAuthorize(bank, color){
+  document.getElementById('ofTitle').textContent='Autorize no '+bank;
+  const logo=document.getElementById('ofLogo');
+  logo.style.background=color;
+  logo.style.color = (color==='#F9DD16') ? '#003399' : '#fff';
+  logo.textContent = bank.slice(0,2).toLowerCase();
+  showScreen('s-ofauth');
+}
+
+/* ---------- Pix copia e cola ---------- */
+function copyPix(btn){
+  const t=document.getElementById('pixText');
+  t.select(); t.setSelectionRange(0,99999);
+  navigator.clipboard?.writeText(t.value);
+  const o=btn.textContent; btn.textContent='Copiado ✓';
+  setTimeout(()=>btn.textContent=o,1600);
+}
+
+/* ---------- Click to Pay ---------- */
+function ctpCheck(){
+  const v=document.getElementById('ctpMail').value;
+  document.getElementById('ctpNext').disabled = !/^[^@]+@[^@]+\.[^@]+$/.test(v);
+}
+function otpMove(el, idx){
+  el.value=el.value.replace(/\D/g,'');
+  const boxes=document.querySelectorAll('#otpBox input');
+  if(el.value && idx<3) boxes[idx+1].focus();
+  const full=[...boxes].every(b=>b.value);
+  document.getElementById('otpNext').disabled=!full;
+}
+function selCard(el){
+  document.querySelectorAll('.savedcard').forEach(c=>c.classList.remove('sel'));
+  el.classList.add('sel');
+}
+
+/* ---------- QR Codes decorativos (padrão determinístico) ---------- */
+function drawQR(svgId, seed){
+  const svg=document.getElementById(svgId);
+  const N=25, cell=100/N; let s=seed, out='';
+  const rnd=()=>{s=(s*9301+49297)%233280; return s/233280;};
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    if(rnd()>0.52) out+=`<rect x="${x*cell}" y="${y*cell}" width="${cell}" height="${cell}" fill="#000"/>`;
+  }
+  // finder patterns
+  const finder=(fx,fy)=>`<rect x="${fx}" y="${fy}" width="${cell*7}" height="${cell*7}" fill="#000"/>
+    <rect x="${fx+cell}" y="${fy+cell}" width="${cell*5}" height="${cell*5}" fill="#fff"/>
+    <rect x="${fx+cell*2}" y="${fy+cell*2}" width="${cell*3}" height="${cell*3}" fill="#000"/>`;
+  out+=finder(0,0)+finder(cell*18,0)+finder(0,cell*18);
+  svg.innerHTML=out;
+}
+drawQR('qrSvg', 12345);
+drawQR('nuQr', 67890);
+</script>
+</body>
+</html>

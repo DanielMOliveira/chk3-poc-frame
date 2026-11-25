@@ -10,4 +10,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Base visual compartilhada (modelo Multipagamentos), servida como /mp-base.css -->
+    <Content Include="..\Shared\design\mp-base.css" Link="wwwroot\mp-base.css" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
