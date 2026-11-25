@@ -53,7 +53,7 @@ public static partial class Chk3Trace
             string h = ctx.Request.Headers[Header].ToString();
             SetCorrelation(ctx, CidRx().IsMatch(h) ? h : Guid.NewGuid().ToString());
             ctx.Items[ItemT0] = Stopwatch.GetTimestamp();
-            using var scope = log.BeginScope(new Dictionary<string, object?> { ["correlationId"] = current.Value, ["servico"] = Servico });
+            using var scope = log.BeginScope(new Scope(current.Value, Servico));
             try { await next(); }
             catch { Write(ctx, "-", null, "excecao", 500, Elapsed(ctx), null, null, Route(ctx)); throw; }
             if (ctx.Items[ItemMark] is MarkData m)
@@ -92,6 +92,17 @@ public static partial class Chk3Trace
         log.LogInformation(
             "chk3 passo={passo} servico={servico} transactionId={transactionId} localRef={localRef} orderId={orderId} resultado={resultado} status={status} duracaoMs={duracaoMs} correlationId={correlationId} rota={rota}",
             passo, Servico, tx, localRef, orderId, resultado, status, ms, ctx.Items[ItemCid] as string, rota);
+
+    /// <summary>Escopo de log: correlationId recebido (ou gerado) e serviço. ToString legível no JSON.</summary>
+    sealed class Scope(string? cid, string servico) : IReadOnlyList<KeyValuePair<string, object?>>
+    {
+        readonly KeyValuePair<string, object?>[] items = [new("correlationId", cid), new("servico", servico)];
+        public KeyValuePair<string, object?> this[int i] => items[i];
+        public int Count => items.Length;
+        public IEnumerator<KeyValuePair<string, object?>> GetEnumerator() => ((IEnumerable<KeyValuePair<string, object?>>)items).GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+        public override string ToString() => $"correlationId:{cid} servico:{servico}";
+    }
 
     sealed record MarkData(string Passo, Guid? Tx, string Resultado, Guid? LocalRef, string? OrderId);
 

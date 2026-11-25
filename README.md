@@ -258,6 +258,12 @@ Falha visível:
   - bandeira fora do snapshot;
   - limite de falhas.
 
+Rastreio e logs: `./scripts/logs-check.sh`. Também roda no `deploy.sh`, depois do smoke.
+- Faz três transações pelo canal (aprovada, recusada e indeterminada).
+- Falha se aparecer dado sensível nos logs (PAN, CVV, validade, nome, `pc_`/`tc_`, fragment, JWT, snapshot, hash ou segredos do `.env`).
+- Falha se o `transactionId` não aparecer em todos os serviços, com os passos esperados.
+- Ver [`docs/operacao/logs-e-rastreio.md`](docs/operacao/logs-e-rastreio.md): log JSON, linha `chk3` por passo e `X-Correlation-Id`.
+
 ## Desvios em relação ao v7 (POC)
 - **Borda e identidade.** Sem Front Door, APIM e Identity Server. O JWT do canal é estático, HS256, com segredo no `.env`. Rate limit e cotas ficam na própria Integration.
 - **Rede interna.** Sem Managed Identity, Firewall HubPCI3.0 e VPN S2S. Os endpoints internos usam uma chave compartilhada (`INTERNAL_API_KEY`) e redes docker separadas.
@@ -294,7 +300,7 @@ src/Autorizacao   API Autorização
 src/GatewayMock   mock do Gateway
 src/CanalFake     canal fake
 tests/Chk3.Tests  testes
-scripts/          init-env.sh, smoke.sh, test.sh, lib-env.sh, browser-e2e.mjs, deploy.sh, deploy-remote.sh
+scripts/          init-env.sh, smoke.sh, logs-check.sh, test.sh, lib-env.sh, browser-e2e.mjs, deploy.sh, deploy-remote.sh
 docs/modelo-visual/ modelo visual de referência (HTML do Daniel)
 docs/operacao/    logs-e-rastreio.md: containers, logs, SQL e rastreio de transação
 ```

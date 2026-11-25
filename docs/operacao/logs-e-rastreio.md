@@ -1,257 +1,300 @@
 # Operação: containers, logs e rastreio de uma transação (POC CHK3 frame v7)
 
-Fontes: `docker-compose.yml` e o código em `src/`, no commit em que este arquivo entrou.
-Todos os comandos foram executados na VPS, no diretório do app, em 25/11/2026. Os trechos de log e de SQL são reais, gerados pelo `scripts/smoke.sh` e pelo E2E no navegador.
-Horários: o `docker compose logs -t` e o Postgres mostram UTC (`Z` / `+00`). Em novembro, Lisboa também está em UTC+0.
+Fontes: `docker-compose.yml`, o código em `src/` e `src/Shared/Trace.cs`.
+Os comandos e os exemplos foram executados na VPS, no diretório do app, em 25/11/2026. As transações foram:
+- três feitas no navegador (E2E pelo túnel SSH): aprovada, recusada e indeterminada;
+- três do `scripts/logs-check.sh`.
+
+O `Timestamp` dos logs e os horários do Postgres estão em UTC. Em novembro, Lisboa também está em UTC+0.
 
 ```bash
 cd /home/daniel/projetos/chk3-poc-frame   # VPS. Em outra máquina, rode na raiz do clone.
 ```
 
-## Resumo: dá para seguir uma transação pelos logs?
+## Resumo
 
-**Hoje, não de ponta a ponta.**
+- **O id que liga tudo é o `transactionId`** (UUIDv7, `payment_sessions.transaction_id`), devolvido no `POST /sessions`.
+- **`docker compose logs | grep <transactionId>` mostra todos os passos da transação, nos 6 containers de aplicação**:
+  canal, opcoes, cartao, integration, autorizacao e gateway-mock.
+  - Na transação aprovada do navegador foram 18 linhas.
+  - O `postgres` não loga transações; o estado está nas tabelas (seção "postgres").
+- Cada serviço escreve **log JSON, uma linha por evento**: console JSON do .NET, com escopos e `Timestamp` UTC.
+- Cada passo do Frame v7 gera **uma linha `chk3`** (`Category: "chk3"`). Campos em `State`:
 
-- O id da transação é o **`transactionId`**: UUIDv7, `payment_sessions.transaction_id`, devolvido no `POST /sessions`.
-  - Ele **não aparece em nenhum log**: `docker compose logs | grep <transactionId>` retorna 0 linhas.
-- O único id que aparece em log é o **`localRef`** (`attempts.local_ref`). Ele é criado no passo 10 e só aparece no log do `autorizacao`:
-  - na URL do passo 13, `POST .../internal/v1/attempts/<localRef>/result`;
-  - no aviso de timeout do Gateway (12b).
-- `canal`, `opcoes` e `cartao` registram só as chamadas HTTP de saída (método, URL sem id, duração, status).
-  - Para ligá-las a uma transação, a única forma é a **janela de tempo** da sessão, tirada do banco.
-  - Com transações simultâneas, essa janela mistura transações.
-- `integration` e `gateway-mock` não registram nada por requisição.
-- **O banco é a fonte de verdade** do estado: `payment_sessions`, `attempts`, `credentials` e `outbox`.
+  | Campo | Conteúdo |
+  |---|---|
+  | `passo` | passo do v7 (`1-4`, `2-4`, `6`, `7`, `8`, `9`, `10`, `11-12`, `13`, `9-14`), ou `-` (requisição sem passo) |
+  | `servico` | canal, opcoes, cartao, integration, autorizacao, gateway-mock |
+  | `transactionId` | id da transação (null só quando ainda é desconhecido, ex.: credencial inválida) |
+  | `localRef` | referência da tentativa no Gateway, do passo 10 em diante |
+  | `orderId` | pedido do canal (quando útil e já validado pela Integration) |
+  | `resultado` | código curto do que aconteceu (ex.: `3c_criada`, `6a_recusada`, `10b_ja_registrada_Autorizada`, `Autorizada_codigo_00`, `9a_cartao_invalido`) |
+  | `status` | status HTTP da resposta, ou da chamada no caso do autorizacao |
+  | `duracaoMs` | duração da requisição ou do passo |
+  | `correlationId` | id de correlação vigente (o transactionId, assim que conhecido) |
+  | `rota` | só nas linhas `passo=-`: o padrão da rota, nunca o path bruto |
 
-O que **não** aparece nos logs (verificado com `grep` nos logs de todos os serviços): PAN de teste, CVV, credencial `pc_`/`tc_`, `#pc=`, header `X-Payment-Credential`.
+- **`X-Correlation-Id`** (header entre serviços, propagado por um handler do HttpClient):
+
+  | Trecho | Valor do header |
+  |---|---|
+  | canal → integration (`POST /sessions`) | id **gerado no canal** (o transactionId ainda não existe) |
+  | navegador → opcoes → integration, passo 6 | id gerado na opcoes (o navegador só tem a credencial `pc`) |
+  | navegador → opcoes → integration, passo 7 | **transactionId** (o JS da Tela envia, a partir do passo 6) |
+  | navegador → cartao, passo 8 | navegação do iframe (POST de formulário, não leva header). O transactionId vai no campo `cid` e a cartao o usa nas chamadas dela |
+  | cartao → integration (8), navegador → cartao (9), cartao → autorizacao → integration / gateway-mock (9 a 13) | **transactionId** |
+
+  - O id **recebido** fica no escopo do log (`Scopes[].correlationId`).
+  - O campo `State.correlationId` mostra o id vigente quando a linha foi escrita: o transactionId, assim que o serviço o conhece.
+  - O transactionId não é segredo (aparece na tela do canal). Mesmo assim, o header só serve para correlação: é validado (GUID / `[A-Za-z0-9-]{8,64}`) e nunca autoriza nada.
+- **O que nunca é registrado:** PAN, CVV, validade, nome, credenciais `pc_`/`tc_`, fragment `#pc=`, JWT, hash, snapshot e segredos do `.env`.
+  - O `scripts/logs-check.sh` confere isso a cada deploy.
+- **HttpClient:** as linhas `Start/End processing HTTP request` estão desligadas (filtro `System.Net.Http.HttpClient=Warning` no código, em `Trace.cs`). O rastro vem das linhas `chk3`.
+  - O ajuste antigo no compose, que não surtia efeito, foi removido.
 
 ## Containers
 
 | Serviço (container) | Papel no Frame v7 | Passos | Porta interna | Porta publicada na VPS | Redes | Fala com |
 |---|---|---|---|---|---|---|
-| `canal` (`chk3-poc-frame-canal-1`) | Canal fake (a "loja"). Cria a sessão no servidor e embute o iframe | 1, 4 | 8080 | `127.0.0.1:18180` | fora | → `integration:8080` `POST /sessions` (JWT + `Idempotency-Key`). O navegador abre o `frameUrl` (Tela de opções) |
-| `opcoes` (`chk3-poc-frame-opcoes-1`) | Tela de opções (fora da CDE). UI estática + proxy fino para a Integration | 5, 6, 7, 14 | 8080 | `127.0.0.1:18181` | fora | → `integration:8090` `/internal/v1/payment-credential/validate` (6) e `/internal/v1/typing-credential` (7). O navegador faz POST do `tc` para o `cartao` (8) |
-| `cartao` (`chk3-poc-frame-cartao-1`) | Web App Cartão (CDE, endpoint pay). Página de digitação no iframe filho | 8, 9, 14 | 8080 | `127.0.0.1:18182` | cde | → `integration:8090` `/internal/v1/typing-credential/validate` (8). → `autorizacao:8080` `/authorize` (9). `postMessage` para a Tela (14) |
-| `autorizacao` (`chk3-poc-frame-autorizacao-1`) | API Autorização (CDE, sem banco). Valida o cartão, garante a tentativa única e chama o Gateway | 9 a 13 | 8080 | não publicada | cde, vpn | → `integration:8090` `/internal/v1/attempts` (10) e `/internal/v1/attempts/{localRef}/result` (13). → `gateway-mock:8080` `/poc/v1/authorize` (11, 12) |
-| `integration` (`chk3-poc-frame-integration-1`) | Integration API. Dona do estado. Pública: `POST /sessions`. Interna: credenciais, tentativa e resultado | 2, 3, 4, 6, 7, 8, 10, 13 | 8080 (pública), 8090 (interna) | `127.0.0.1:18183` → 8080. A 8090 não é publicada | fora, cde, dados | → `postgres:5432`. Recebe de `canal` (8080) e de `opcoes`, `cartao` e `autorizacao` (8090, `X-Internal-Key`) |
-| `gateway-mock` (`chk3-poc-frame-gateway-mock-1`) | Gateway MCN simulado. Aprova, recusa ou demora conforme o PAN de teste | 11, 12 | 8080 | não publicada | vpn (internal) | Só recebe do `autorizacao` (`X-Gateway-Key`) |
+| `canal` (`chk3-poc-frame-canal-1`) | Canal fake (a "loja"). Cria a sessão no servidor e embute o iframe | 1, 4 | 8080 | `127.0.0.1:18180` | fora | → `integration:8080` `POST /sessions` (JWT + `Idempotency-Key`) |
+| `opcoes` (`chk3-poc-frame-opcoes-1`) | Tela de opções (fora da CDE). UI estática + proxy fino | 5, 6, 7, 14 | 8080 | `127.0.0.1:18181` | fora | → `integration:8090` `/internal/v1/payment-credential/validate` (6) e `/internal/v1/typing-credential` (7) |
+| `cartao` (`chk3-poc-frame-cartao-1`) | Web App Cartão (CDE, endpoint pay). Página de digitação no iframe filho | 8, 9, 14 | 8080 | `127.0.0.1:18182` | cde | → `integration:8090` `/internal/v1/typing-credential/validate` (8). → `autorizacao:8080` `/authorize` (9) |
+| `autorizacao` (`chk3-poc-frame-autorizacao-1`) | API Autorização (CDE, sem banco) | 9 a 13 | 8080 | não publicada | cde, vpn | → `integration:8090` `/internal/v1/attempts` (10) e `/internal/v1/attempts/{localRef}/result` (13). → `gateway-mock:8080` (11, 12) |
+| `integration` (`chk3-poc-frame-integration-1`) | Integration API, dona do estado | 2, 3, 4, 6, 7, 8, 10, 13 | 8080 (pública), 8090 (interna) | `127.0.0.1:18183` → 8080 | fora, cde, dados | → `postgres:5432` |
+| `gateway-mock` (`chk3-poc-frame-gateway-mock-1`) | Gateway MCN simulado | 11, 12 | 8080 | não publicada | vpn (internal) | Só recebe do `autorizacao` |
 | `postgres` (`chk3-poc-frame-postgres-1`) | Postgres 17. Volume `chk3-poc-frame_pgdata` | 3, 6, 7, 10, 13 | 5432 | não publicada | dados (internal) | Só a `integration` acessa |
 
-Também existe o serviço `tests` (profile `test`, só sobe com `./scripts/test.sh`).
-
-Na VPS, o acesso é pelo túnel SSH: `localhost:8080`, `:8081`, `:8082` e `:8083` no PC → `127.0.0.1:18180` a `18183` na VPS.
-
-Níveis de log configurados no compose:
-- `Default=Information`, `Microsoft.AspNetCore=Warning`: o ASP.NET não registra as requisições recebidas.
-- `System.Net.Http.HttpClient=Warning`: **na prática não está surtindo efeito**. As linhas `Start/End processing HTTP request` do HttpClient aparecem em nível `info`, e hoje elas são o único rastro por requisição. Ver "Lacunas".
+> **Os logs vivem no container.** Um `docker compose up --build` (todo deploy) ou um `down` recria os containers e **apaga os logs anteriores**. O estado da transação continua no Postgres.
 
 ## Ferramentas comuns
 
 ```bash
-# Todos os serviços ao vivo, só linhas novas, com horário
-docker compose logs -f -t --tail=0
+# Todos os serviços ao vivo, só as linhas de passo, legíveis
+docker compose logs -f --no-color --no-log-prefix --tail=0 \
+  | jq --unbuffered -R -r 'fromjson? | select(.Category=="chk3") | .Timestamp + " " + .Message'
 
-# Um serviço ao vivo (últimas 50 linhas e segue)
+# Um serviço ao vivo (JSON cru)
 docker compose logs -f -t --tail=50 autorizacao
 
-# Uma janela de tempo (UTC), todos os serviços
-docker compose logs -t --no-color --since 2026-11-25T20:18:28Z --until 2026-11-25T20:18:29Z
+# Uma transação inteira, todos os containers (cru)
+TX=01a21473-ba9f-776d-95c2-a381ed0d3519
+docker compose logs --no-color | grep "$TX"
 
-# SQL no Postgres usando o usuário e o banco que já estão no ambiente do container (não exibe senha)
+# A mesma transação, em tabela ordenada por horário (inclui avisos, como o timeout do Gateway)
+docker compose logs --no-color --no-log-prefix | grep "$TX" \
+  | jq -r '[.Timestamp, (.State.servico // ([.Scopes[]?|select(.servico)|.servico][0])), (.State.passo // .LogLevel),
+            (.State.resultado // .Message), (.State.status|tostring), (.State.duracaoMs|tostring)] | @tsv' | sort
+
+# Só com jq, sem grep (filtra pelo campo, não pelo texto)
+docker compose logs --no-color --no-log-prefix \
+  | jq -R -r --arg tx "$TX" 'fromjson? | select(.Category=="chk3" and .State.transactionId==$tx) | .Timestamp + " " + .Message' | sort
+
+# SQL no Postgres usando o usuário e o banco do ambiente do container (não exibe senha)
 chk3sql() { docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 "$@"' sh "$@"; }
-chk3sql -c "SELECT now();"
 ```
 
 > Dentro de script lido por stdin (`ssh vps 'bash -s' < script.sh`), o `docker compose exec -T` consome o stdin. Use `chk3sql ... </dev/null` nesse caso.
+
+Nos exemplos abaixo, cada linha mostra o `Timestamp` e o `Message` da linha JSON, sem os campos `(null)`.
 
 ---
 
 ## `canal`
 
-**O que registra hoje:**
-- Partida do app (`Microsoft.Hosting.Lifetime`).
-- Uma linha `info` do HttpClient por `POST http://integration:8080/sessions`, com duração e status.
-- **Não registra** `transactionId`, pedido nem valor.
+**O que registra:**
+- `passo=1-4`, uma linha por `POST /checkout`, com `transactionId`, `orderId` e `resultado`:
+  - `sessao_<estado>_<frame_embutido|sem_frame>_http<status do POST /sessions>`;
+  - ou `erro_integration_<status>` (nesse caso, sem orderId).
+- O escopo tem o correlation id gerado antes do `POST /sessions`.
+- A `frameUrl` (com `#pc=`) e o JWT nunca vão para o log.
 
-**Ao vivo:** `docker compose logs -f -t --tail=50 canal`
+**Ao vivo:** `docker compose logs -f --no-color --no-log-prefix --tail=20 canal | jq --unbuffered -R -r 'fromjson? | .Timestamp + " " + .Message'`
 
-**Filtrar por transação:**
-- Não há id no log. Use a janela de tempo da sessão (`payment_sessions.created_at`); ver "Passo a passo".
-- O `transactionId` aparece na tela do canal (cartão lateral "transactionId").
-
-**Exemplo real** (E2E no navegador, pelo túnel):
-
-```
-canal-1  | 2026-11-25T20:19:19.349495796Z info: System.Net.Http.HttpClient.integration.LogicalHandler[100]
-canal-1  | 2026-11-25T20:19:19.349559625Z       Start processing HTTP request POST http://integration:8080/sessions
-canal-1  | 2026-11-25T20:19:19.431835619Z info: System.Net.Http.HttpClient.integration.LogicalHandler[101]
-canal-1  | 2026-11-25T20:19:19.431845267Z       End processing HTTP request after 85.4655ms - 201
-```
-
-## `opcoes`
-
-**O que registra hoje:**
-- Linhas `info` do HttpClient para `.../payment-credential/validate` (passo 6, inclusive as reapresentações) e `.../typing-credential` (passo 7), com status.
-- A credencial vai em header e **não** é registrada.
-- 401 = credencial inválida, expirada ou já usada (6a).
-
-**Ao vivo:** `docker compose logs -f -t --tail=50 opcoes`
-
-**Filtrar por transação:** sem id; use a janela de tempo. Para ver só as recusas:
-
-```bash
-docker compose logs -t --no-color opcoes | grep -E "End processing HTTP request .* - 401"
-```
-
-**Exemplo real** (caso aprova do smoke):
-
-```
-opcoes-1  | 2026-11-25T20:18:28.768859569Z       Start processing HTTP request POST http://integration:8090/internal/v1/payment-credential/validate
-opcoes-1  | 2026-11-25T20:18:28.773621229Z       End processing HTTP request after 4.7711ms - 200
-opcoes-1  | 2026-11-25T20:18:28.798284549Z       Start processing HTTP request POST http://integration:8090/internal/v1/typing-credential
-opcoes-1  | 2026-11-25T20:18:28.804180458Z       End processing HTTP request after 5.929ms - 200
-opcoes-1  | 2026-11-25T20:18:28.912428511Z       Start processing HTTP request POST http://integration:8090/internal/v1/payment-credential/validate
-opcoes-1  | 2026-11-25T20:18:28.916157665Z       End processing HTTP request after 3.785ms - 401
-```
-
-A última linha é o teste 6a do smoke: a credencial deixa de valer depois da tentativa.
-
-## `cartao`
-
-**O que registra hoje:**
-- Linhas `info` do HttpClient para `.../typing-credential/validate` (passo 8) e `http://autorizacao:8080/authorize` (passo 9), com duração e status.
-- 200 = resultado (Autorizada, Recusada ou Indeterminada; o status HTTP não distingue). 409 = tentativa já registrada (10b). 422 = validação (9a/10a).
-- O PAN **não** é registrado.
-
-**Ao vivo:** `docker compose logs -f -t --tail=50 cartao`
-
-**Filtrar por transação:** sem id; use a janela de tempo. A duração do `/authorize` ajuda a achar timeouts (cerca de 3 s com `GATEWAY_TIMEOUT_MS=3000`):
-
-```bash
-docker compose logs -t --no-color cartao | grep -E "End processing HTTP request after [0-9]{4,}\."
-```
-
-**Exemplo real** (caso aprova):
-
-```
-cartao-1  | 2026-11-25T20:18:28.814972820Z       Start processing HTTP request POST http://integration:8090/internal/v1/typing-credential/validate
-cartao-1  | 2026-11-25T20:18:28.818779971Z       End processing HTTP request after 3.9278ms - 200
-cartao-1  | 2026-11-25T20:18:28.836165840Z       Start processing HTTP request POST http://autorizacao:8080/authorize
-cartao-1  | 2026-11-25T20:18:28.857312915Z       End processing HTTP request after 21.132ms - 200
-cartao-1  | 2026-11-25T20:18:28.879944443Z       Start processing HTTP request POST http://autorizacao:8080/authorize
-cartao-1  | 2026-11-25T20:18:28.886983565Z       End processing HTTP request after 7.0507ms - 409
-```
-
-O segundo `/authorize` é o teste 10b do smoke (segunda tentativa recusada).
-
-## `autorizacao`
-
-**O que registra hoje:**
-- Linhas `info` do HttpClient para `.../attempts` (10; 201 = tentativa criada, 409 = já existia), `http://gateway-mock:8080/poc/v1/authorize` (11/12) e `.../attempts/<localRef>/result` (13).
-- `warn: Gateway sem resposta no prazo para localRef <localRef>` (12b, vira Indeterminada).
-- `fail: Falha ao registrar resultado da localRef <localRef>`, se o passo 13 falhar três vezes.
-- É **o único serviço com id no log**: o `localRef`. O `transactionId` não aparece.
-
-**Ao vivo:** `docker compose logs -f -t --tail=50 autorizacao`
-
-**Filtrar por transação:**
-
-```bash
-LR=$(chk3sql -tAc "SELECT local_ref FROM attempts WHERE transaction_id = '01a2145c-1506-7ad1-8ab6-ee5bedcc2965'")
-docker compose logs -t --no-color autorizacao | grep "$LR"
-# Só avisos e falhas (timeouts do Gateway, falha no passo 13)
-docker compose logs -t --no-color autorizacao | grep -A1 -E "^\S+\s+\| \S+ (warn|fail):"
-```
-
-**Exemplo real.** Caso aprova (`localRef bffdd195-...`):
-
-```
-autorizacao-1  | 2026-11-25T20:18:28.839938066Z       Start processing HTTP request POST http://integration:8090/internal/v1/attempts
-autorizacao-1  | 2026-11-25T20:18:28.847597101Z       End processing HTTP request after 7.7711ms - 201
-autorizacao-1  | 2026-11-25T20:18:28.847914156Z       Start processing HTTP request POST http://gateway-mock:8080/poc/v1/authorize
-autorizacao-1  | 2026-11-25T20:18:28.851165424Z       End processing HTTP request after 3.2914ms - 200
-autorizacao-1  | 2026-11-25T20:18:28.851281652Z       Start processing HTTP request POST http://integration:8090/internal/v1/attempts/bffdd195-fc72-4a2d-898e-e2cb3b3310fb/result
-autorizacao-1  | 2026-11-25T20:18:28.856639922Z       End processing HTTP request after 5.3065ms - 200
-```
-
-Caso timeout (Indeterminada):
-
-```
-autorizacao-1  | 2026-11-25T20:18:32.418225859Z warn: Program[0]
-autorizacao-1  | 2026-11-25T20:18:32.418279720Z       Gateway sem resposta no prazo para localRef 5aefe142-ce9c-4c72-9c5b-a27288b8d24b
-autorizacao-1  | 2026-11-25T20:18:32.418417398Z       Start processing HTTP request POST http://integration:8090/internal/v1/attempts/5aefe142-ce9c-4c72-9c5b-a27288b8d24b/result
-```
-
-## `integration`
-
-**O que registra hoje:**
-- Partida: `Migração aplicada: <versão>` na primeira subida e `Postgres indisponível (tentativa N)` enquanto o banco não sobe.
-- Dois avisos de inicialização, ambos esperados no POC:
-  - `Overriding address(es) 'http://*:8080'`: o app escuta em 8080 e 8090;
-  - `No XML encryptor configured`: DataProtection sem chave persistida.
-- **Nada por requisição:** nem sessão criada, nem validação, nem tentativa ou resultado.
-- Os dados da transação estão no Postgres. Ver as consultas SQL abaixo.
-
-**Ao vivo:** `docker compose logs -f -t --tail=50 integration`
-
-**Filtrar por transação:** não é possível pelo log; use o SQL.
-
-**Exemplo real** (na subida, depois do deploy):
-
-```
-integration-1  | 2026-11-25T20:17:06.570101678Z       Now listening on: http://[::]:8080
-integration-1  | 2026-11-25T20:17:06.570592547Z       Now listening on: http://[::]:8090
-```
-
-Durante o smoke e o E2E, `docker compose logs --since <início> integration` retornou **0 linhas**.
-
-## `gateway-mock`
-
-**O que registra hoje:** só a partida. Nenhuma linha por autorização.
-
-**Ao vivo:** `docker compose logs -f -t --tail=50 gateway-mock`
-
-**Filtrar por transação:**
-- Não é possível.
-- A chamada aparece no log do `autorizacao` (`POST http://gateway-mock:8080/poc/v1/authorize`).
-- O mock recebe o `localRef` no campo `reference`, mas não o registra.
-- O resultado fica em `attempts.result` e `attempts.gateway_code`: `00` aprovado, `05` recusado, vazio em timeout.
-
-**Exemplo real:** depois do smoke e do E2E, `docker compose logs --since <início> gateway-mock` retornou **0 linhas**.
-
-## `postgres`
-
-**O que registra hoje:**
-- Só eventos do servidor: partida, checkpoints e `database system is ready`.
-- Consultas não são registradas (padrão `log_statement=none`).
-
-**Ao vivo:** `docker compose logs -f -t --tail=50 postgres`
-
-**Filtrar por transação:** use o SQL.
+**Filtrar por transação:** `docker compose logs --no-color canal | grep "$TX"`
 
 **Exemplo real:**
 
 ```
-postgres-1  | 2026-11-25T20:17:02.176918175Z PostgreSQL Database directory appears to contain a database; Skipping initialization
-postgres-1  | 2026-11-25T20:17:02.529519924Z 2026-11-25 20:17:02.529 UTC [1] LOG:  database system is ready to accept connections
+2026-11-25T20:44:18.471Z chk3 passo=1-4 servico=canal transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 orderId=PED-1001 resultado=sessao_Criada_frame_embutido_http201 status=200 duracaoMs=11 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+```
+
+O id gerado no canal antes do `POST /sessions` fica no escopo:
+
+```bash
+docker compose logs --no-color --no-log-prefix canal | grep "$TX" | jq -r '[.Scopes[]?|select(.servico)|.correlationId][0] + " -> " + .State.transactionId'
+# 16fdfe88-3eb6-4a45-b207-e70bf1069233 -> 01a21473-ba9f-776d-95c2-a381ed0d3519
+```
+
+## `opcoes`
+
+**O que registra:**
+- `passo=6`: uma linha por validação da credencial, inclusive reapresentações. Resultados `valida` ou `6a_recusada_integration_401`.
+- `passo=7`: credencial de digitação emitida.
+- O `transactionId` vem da resposta da Integration. A credencial vai em header e não é registrada.
+
+**Ao vivo:** `docker compose logs -f --no-color --no-log-prefix --tail=20 opcoes | jq --unbuffered -R -r 'fromjson? | .Timestamp + " " + .Message'`
+
+**Filtrar por transação:** `docker compose logs --no-color opcoes | grep "$TX"`
+
+**Recusas (6a), que não têm transactionId:**
+
+```bash
+docker compose logs --no-color --no-log-prefix opcoes | jq -R -r 'fromjson? | select(.State.resultado? // "" | startswith("6a")) | .Timestamp + " " + .Message'
+```
+
+**Exemplo real:**
+
+```
+2026-11-25T20:44:19.975Z chk3 passo=6 servico=opcoes transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 orderId=PED-1001 resultado=valida status=200 duracaoMs=11 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+2026-11-25T20:44:21.732Z chk3 passo=6 servico=opcoes transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 orderId=PED-1001 resultado=valida status=200 duracaoMs=4 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+2026-11-25T20:44:22.377Z chk3 passo=7 servico=opcoes transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 resultado=credencial_digitacao_emitida status=200 duracaoMs=8 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+```
+
+A segunda linha do passo 6 é o "Recarregar frame" do E2E (reapresentação sem consumir).
+
+## `cartao`
+
+**O que registra:**
+- `passo=8`: página de digitação entregue, ou `recusada_integration_401`.
+- `passo=9-14`: resultado devolvido ao navegador, que vira o `postMessage` do passo 14. Valores possíveis:
+  - `Autorizada`, `Recusada`, `Indeterminada`;
+  - `TentativaJaRegistrada` (10b);
+  - `ValidacaoFalhou_<código>` (9a);
+  - `SessaoInvalida` (10a).
+- O PAN nunca é registrado.
+
+**Ao vivo:** `docker compose logs -f --no-color --no-log-prefix --tail=20 cartao | jq --unbuffered -R -r 'fromjson? | .Timestamp + " " + .Message'`
+
+**Filtrar por transação:** `docker compose logs --no-color cartao | grep "$TX"`
+
+**Pagamentos lentos** (timeouts do Gateway passam de 3000 ms):
+
+```bash
+docker compose logs --no-color --no-log-prefix cartao | jq -R -r 'fromjson? | select(.State.passo?=="9-14" and .State.duracaoMs > 2000) | .Timestamp + " " + .Message'
+```
+
+**Exemplo real:**
+
+```
+2026-11-25T20:44:22.759Z chk3 passo=8 servico=cartao transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 resultado=pagina_digitacao_entregue status=200 duracaoMs=6 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+2026-11-25T20:44:24.462Z chk3 passo=9-14 servico=cartao transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 resultado=Autorizada status=200 duracaoMs=23 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+```
+
+## `autorizacao`
+
+**O que registra** (uma linha por passo, na mesma requisição):
+- `passo=9`: `validacao_ok` ou `9a_<código>` (`snapshot_invalido`, `cartao_invalido`, `bandeira_nao_aceita`, `parcelas_invalidas`, `pan_nao_permitido_no_poc`). Só o código; nunca dado de cartão.
+- `passo=10`: `10c_registrada` (com `localRef`), `10b_ja_registrada_<estado>` ou `10a_sessao_invalida`.
+- `passo=11-12`: `<resultado>_codigo_<código do Gateway>` ou `Indeterminada_timeout_12b`, com a duração da chamada ao Gateway.
+- `passo=13`: `<resultado>_registrado` ou `falha_registro`.
+- Mais o aviso `Gateway sem resposta no prazo para localRef … transactionId …` (Warning) e o erro `Falha ao registrar resultado …`.
+
+**Ao vivo:** `docker compose logs -f --no-color --no-log-prefix --tail=20 autorizacao | jq --unbuffered -R -r 'fromjson? | .Timestamp + " " + .LogLevel + " " + .Message'`
+
+**Filtrar por transação:** `docker compose logs --no-color autorizacao | grep "$TX"`. O `grep "$LOCALREF"` também funciona.
+
+**Exemplo real.** Aprovada:
+
+```
+2026-11-25T20:44:24.441Z chk3 passo=9 servico=autorizacao transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 resultado=validacao_ok status=(null) duracaoMs=0 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+2026-11-25T20:44:24.451Z chk3 passo=10 servico=autorizacao transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 localRef=e68af5d8-384c-470f-9c10-ce323e011ad5 orderId=PED-1001 resultado=10c_registrada status=201 duracaoMs=9 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+2026-11-25T20:44:24.455Z chk3 passo=11-12 servico=autorizacao transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 localRef=e68af5d8-384c-470f-9c10-ce323e011ad5 resultado=Autorizada_codigo_00 status=200 duracaoMs=3 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+2026-11-25T20:44:24.461Z chk3 passo=13 servico=autorizacao transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 localRef=e68af5d8-384c-470f-9c10-ce323e011ad5 resultado=Autorizada_registrado status=(null) duracaoMs=6 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+```
+
+Indeterminada (timeout do Gateway):
+
+```
+2026-11-25T20:44:42.874Z Gateway sem resposta no prazo para localRef be290d39-a437-4f89-a037-fb30397e39b9 transactionId 01a21473-f707-7496-a32b-27401c121377
+2026-11-25T20:44:42.874Z chk3 passo=11-12 servico=autorizacao transactionId=01a21473-f707-7496-a32b-27401c121377 localRef=be290d39-a437-4f89-a037-fb30397e39b9 resultado=Indeterminada_timeout_12b status=(null) duracaoMs=3002 correlationId=01a21473-f707-7496-a32b-27401c121377
+```
+
+## `integration`
+
+**O que registra** (uma linha por requisição):
+- `passo=2-4`: `3c_criada`, `3b_nova_credencial`, `3b_estado_<estado>`, `3a_conteudo_diferente`, `2_canal_nao_autorizado`, `2_pedido_invalido`, `2a_campos_adicionais_invalidos`, `2b_parcelas_invalidas`. O `orderId` só aparece depois de validado; pedido recusado não vai para o log.
+- `passo=6`: `valida` ou `6a_recusada`.
+- `passo=7`: `emitida`, `recusada` ou `limite_credenciais`.
+- `passo=8`: `valida` ou `recusada`.
+- `passo=10`: `10c_registrada` (com `localRef`), `10b_ja_registrada_<estado>` ou `10a_sessao_invalida`.
+- `passo=13`: `<resultado>_outbox_pagamento.<resultado>` (estado e evento gravados juntos), `ja_registrado_<resultado>` ou `resultado_ja_registrado`.
+- `passo=-`: requisição sem passo, com a `rota` e o status. Exemplos: chave interna errada (401) ou porta errada (404).
+- Na subida, também registra migrações e os avisos esperados do POC: DataProtection efêmero, e `Overriding address(es)` (o app escuta em 8080 e 8090).
+
+**Ao vivo:** `docker compose logs -f --no-color --no-log-prefix --tail=20 integration | jq --unbuffered -R -r 'fromjson? | .Timestamp + " " + .Message'`
+
+**Filtrar por transação:** `docker compose logs --no-color integration | grep "$TX"`
+
+**Exemplo real:**
+
+```
+2026-11-25T20:44:18.469Z chk3 passo=2-4 servico=integration transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 orderId=PED-1001 resultado=3c_criada status=201 duracaoMs=7 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+2026-11-25T20:44:19.974Z chk3 passo=6 servico=integration transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 orderId=PED-1001 resultado=valida status=200 duracaoMs=3 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+2026-11-25T20:44:22.376Z chk3 passo=7 servico=integration transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 resultado=emitida status=200 duracaoMs=6 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+2026-11-25T20:44:22.757Z chk3 passo=8 servico=integration transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 resultado=valida status=200 duracaoMs=3 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+2026-11-25T20:44:24.449Z chk3 passo=10 servico=integration transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 localRef=e68af5d8-384c-470f-9c10-ce323e011ad5 orderId=PED-1001 resultado=10c_registrada status=201 duracaoMs=7 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+2026-11-25T20:44:24.461Z chk3 passo=13 servico=integration transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 localRef=e68af5d8-384c-470f-9c10-ce323e011ad5 resultado=Autorizada_outbox_pagamento.autorizada status=200 duracaoMs=5 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+```
+
+## `gateway-mock`
+
+**O que registra:**
+- `passo=11-12`, uma linha por autorização: `approved_00`, `declined_05`, `timeout_simulado_cliente_desistiu` (status 499, quando a API Autorização desiste no prazo) ou `pan_nao_e_de_teste`.
+- O `localRef` vem do campo `reference` do contrato do mock.
+- O `transactionId` vem do header `X-Correlation-Id` enviado pela API Autorização: o contrato do Gateway não tem esse campo.
+
+**Ao vivo:** `docker compose logs -f --no-color --no-log-prefix --tail=20 gateway-mock | jq --unbuffered -R -r 'fromjson? | .Timestamp + " " + .Message'`
+
+**Filtrar por transação:** `docker compose logs --no-color gateway-mock | grep "$TX"`
+
+**Exemplo real.** Aprovada e timeout:
+
+```
+2026-11-25T20:44:24.454Z chk3 passo=11-12 servico=gateway-mock transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 localRef=e68af5d8-384c-470f-9c10-ce323e011ad5 resultado=approved_00 status=200 duracaoMs=0 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519
+2026-11-25T20:44:42.872Z chk3 passo=11-12 servico=gateway-mock transactionId=01a21473-f707-7496-a32b-27401c121377 localRef=be290d39-a437-4f89-a037-fb30397e39b9 resultado=timeout_simulado_cliente_desistiu status=499 duracaoMs=3000 correlationId=01a21473-f707-7496-a32b-27401c121377
+```
+
+Linha JSON completa (as demais seguem o mesmo formato):
+
+```json
+{"Timestamp":"2026-11-25T20:44:24.454Z","EventId":0,"LogLevel":"Information","Category":"chk3","Message":"chk3 passo=11-12 servico=gateway-mock transactionId=01a21473-ba9f-776d-95c2-a381ed0d3519 localRef=e68af5d8-384c-470f-9c10-ce323e011ad5 orderId=(null) resultado=approved_00 status=200 duracaoMs=0 correlationId=01a21473-ba9f-776d-95c2-a381ed0d3519 rota=(null)","State":{"passo":"11-12","servico":"gateway-mock","transactionId":"01a21473-ba9f-776d-95c2-a381ed0d3519","localRef":"e68af5d8-384c-470f-9c10-ce323e011ad5","orderId":null,"resultado":"approved_00","status":200,"duracaoMs":0,"correlationId":"01a21473-ba9f-776d-95c2-a381ed0d3519","rota":null,"{OriginalFormat}":"..."},"Scopes":[{"SpanId":"5fa3d90fef80a2e2","TraceId":"2cbbcc7273cb3f16842ea3f8e586fd61","ParentId":"933140a6fda6d69f"},{"ConnectionId":"0HNQB6J88RA4U"},{"RequestId":"0HNQB6J88RA4U:00000001","RequestPath":"/poc/v1/authorize"},{"correlationId":"01a21473-ba9f-776d-95c2-a381ed0d3519","servico":"gateway-mock"}]}
+```
+
+O `{OriginalFormat}` e os `Message` dos escopos foram encurtados aqui.
+- `TraceId`/`ParentId` são do W3C `traceparent`, que o .NET já propaga dentro de uma mesma requisição.
+- O `correlationId` do último escopo é o `X-Correlation-Id` recebido.
+
+## `postgres`
+
+**O que registra:** só eventos do servidor (partida, checkpoints). Consultas não são registradas (`log_statement=none`).
+O estado da transação está nas tabelas.
+
+**Ao vivo:** `docker compose logs -f -t --tail=20 postgres`
+
+**Filtrar por transação:** use o SQL abaixo.
+
+**Exemplo real:**
+
+```
+2026-11-25 20:27:02.451 UTC [28] LOG:  checkpoint starting: time
 ```
 
 ### Tabelas (de `src/Integration/Migrations/0001_inicial.sql`)
 
 - `payment_sessions`: uma linha por pagamento/sessão.
   - Colunas: `transaction_id`, `channel_id`, `idempotency_key`, `order_id`, `amount_cents`, `currency`, `installments`, `state`, `created_at`, `expires_at`, `updated_at`.
-  - `state` vai de `Criada` para `AutorizacaoSolicitada` e depois `Autorizada`, `Recusada` ou `Indeterminada`.
+  - `state`: `Criada` → `AutorizacaoSolicitada` → `Autorizada` / `Recusada` / `Indeterminada`.
 - `credentials`: só o hash das credenciais.
   - Colunas: `kind` (`pagamento`/`digitacao`), `transaction_id`, `created_at`, `expires_at`.
   - Não selecione `hash`.
 - `attempts`: tentativa única por sessão (PK `transaction_id`).
   - Colunas: `local_ref`, `brand`, `installments`, `stage` (`envio_iniciado` → `resultado_registrado`), `result`, `gateway_code`, `created_at`, `updated_at`.
 - `outbox`: evento gravado na mesma transação SQL do resultado.
-  - Colunas: `id`, `transaction_id`, `event_type` (`pagamento.autorizada|recusada|indeterminada`), `payload`, `created_at`, `delivered_at`.
+  - Colunas: `id`, `transaction_id`, `event_type`, `payload`, `created_at`, `delivered_at`.
   - O worker de entrega (15/16) está fora do POC, então `delivered_at` fica sempre nulo.
-- `channels`: cadastro dos canais (`canal-fake`, `canal-ttl-curto`).
+- `channels`: cadastro dos canais.
 
-### Consultas SQL (testadas)
+### Consultas SQL
 
 ```bash
 # Últimas sessões
@@ -259,7 +302,6 @@ chk3sql -c "SELECT transaction_id, channel_id, order_id, amount_cents, currency,
             FROM payment_sessions ORDER BY created_at DESC LIMIT 10;"
 
 # Uma transação completa: sessão + tentativa, credenciais (sem hash) e outbox
-TX=01a2145c-1506-7ad1-8ab6-ee5bedcc2965
 chk3sql -v tx="$TX" <<'SQL'
 SELECT p.transaction_id, p.channel_id, p.order_id, p.idempotency_key, p.amount_cents, p.currency, p.state,
        p.created_at, p.expires_at, p.updated_at,
@@ -279,139 +321,111 @@ chk3sql -c "SELECT transaction_id, local_ref, brand, installments, stage, result
 chk3sql -c "SELECT id, transaction_id, event_type, payload, created_at, delivered_at FROM outbox ORDER BY id DESC LIMIT 10;"
 chk3sql -c "SELECT count(*) AS outbox_nao_entregue FROM outbox WHERE delivered_at IS NULL;"
 
-# Contagem por estado, e sessões que pedem atenção (em autorização ou indeterminadas)
+# Contagem por estado, e sessões que pedem atenção
 chk3sql -c "SELECT state, count(*) FROM payment_sessions GROUP BY state ORDER BY state;"
 chk3sql -c "SELECT p.transaction_id, p.state, a.stage, a.result, p.updated_at
             FROM payment_sessions p LEFT JOIN attempts a USING (transaction_id)
             WHERE p.state IN ('AutorizacaoSolicitada','Indeterminada') ORDER BY p.updated_at DESC LIMIT 10;"
 
-# Do localRef (log do autorizacao) para a transação
-chk3sql -tAc "SELECT transaction_id, result FROM attempts WHERE local_ref = 'bffdd195-fc72-4a2d-898e-e2cb3b3310fb'"
-
-# Por pedido do canal
-chk3sql -c "SELECT transaction_id, state, created_at FROM payment_sessions WHERE order_id = 'SMOKE-aprova' ORDER BY created_at DESC LIMIT 5;"
-```
-
-Saída real da consulta "uma transação completa" (caso aprova do smoke):
-
-```
-transaction_id  | 01a2145c-1506-7ad1-8ab6-ee5bedcc2965
-channel_id      | canal-fake
-order_id        | SMOKE-aprova
-idempotency_key | smoke-2f6697835d7320f0
-amount_cents    | 1990
-currency        | BRL
-state           | Autorizada
-created_at      | 2026-11-25 20:18:28.742827+00
-expires_at      | 2026-11-25 20:48:28.742827+00
-updated_at      | 2026-11-25 20:18:28.852301+00
-local_ref       | bffdd195-fc72-4a2d-898e-e2cb3b3310fb
-brand           | visa
-installments    | 1
-stage           | resultado_registrado
-result          | Autorizada
-gateway_code    | 00
-attempt_at      | 2026-11-25 20:18:28.842165+00
-result_at       | 2026-11-25 20:18:28.852301+00
-
-   kind    |          created_at           |          expires_at
------------+-------------------------------+-------------------------------
- pagamento | 2026-11-25 20:18:28.742827+00 | 2026-11-25 20:48:28.742827+00
- digitacao | 2026-11-25 20:18:28.801324+00 | 2026-11-25 20:48:28.742827+00
-
- id |      event_type      |                                     payload                                      |          created_at           | delivered_at
-----+----------------------+----------------------------------------------------------------------------------+-------------------------------+--------------
- 19 | pagamento.autorizada | {"state": "Autorizada", "transactionId": "01a2145c-1506-7ad1-8ab6-ee5bedcc2965"} | 2026-11-25 20:18:28.852301+00 |
+# Do localRef para a transação; e por pedido do canal
+chk3sql -tAc "SELECT transaction_id, result FROM attempts WHERE local_ref = 'e68af5d8-384c-470f-9c10-ce323e011ad5'"
+chk3sql -c "SELECT transaction_id, state, created_at FROM payment_sessions WHERE order_id = 'PED-1001' ORDER BY created_at DESC LIMIT 5;"
 ```
 
 ---
 
 ## Passo a passo: rastrear uma transação de ponta a ponta
 
-1. **Ache o `transactionId`.**
-   - No navegador: o cartão lateral do canal mostra o `transactionId`.
-   - Pelo banco: as consultas "Últimas sessões" ou "Por pedido do canal".
-2. **Veja o estado no banco**: a consulta "uma transação completa".
-   - `state`, `local_ref`, `result`, `gateway_code`, os horários de cada passo (`created_at` = 3c, credencial `digitacao` = 7, `attempt_at` = 10, `result_at` = 13) e o evento no `outbox`.
-3. **Pegue o trecho de log de todos os serviços na janela da transação.** Ela vai da criação da sessão até 1 s depois do resultado:
+1. **Ache o `transactionId`**, de um destes jeitos:
+   - na tela do canal (cartão lateral "transactionId");
+   - no SQL ("Últimas sessões" ou "por pedido");
+   - nos logs do canal: `docker compose logs --no-color --no-log-prefix canal | jq -R -r 'fromjson? | select(.Category=="chk3") | .Timestamp + " " + .State.transactionId + " " + (.State.orderId//"")'`.
+2. **Puxe todos os containers de uma vez:**
 
    ```bash
-   TX=01a2145c-1506-7ad1-8ab6-ee5bedcc2965
-   read SINCE UNTIL < <(chk3sql -tA -F ' ' -c "SELECT to_char(p.created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-       to_char(COALESCE(a.updated_at, p.updated_at) AT TIME ZONE 'UTC' + interval '1 second','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
-       FROM payment_sessions p LEFT JOIN attempts a USING (transaction_id) WHERE p.transaction_id = '$TX'")
-   echo "$SINCE .. $UNTIL"
-   docker compose logs -t --no-color --since "$SINCE" --until "$UNTIL" \
-     | grep -E "processing HTTP request|warn:|fail:|Gateway sem resposta|Falha ao registrar" | grep -v "Start processing" | sort -k3
+   TX=01a21473-ba9f-776d-95c2-a381ed0d3519
+   docker compose logs --no-color | grep "$TX"                                     # cru
+   docker compose logs --no-color --no-log-prefix | grep "$TX" \
+     | jq -r '[.Timestamp, (.State.servico // ([.Scopes[]?|select(.servico)|.servico][0])), (.State.passo // .LogLevel),
+              (.State.resultado // .Message), (.State.status|tostring), (.State.duracaoMs|tostring)] | @tsv' | sort
    ```
 
-   - O `--since`/`--until` tem resolução de segundo.
-   - Em uso real, com o navegador, a janela vai de minutos até o usuário digitar o cartão, e pode conter outras transações.
-4. **Confirme a parte do Gateway pelo `localRef`:**
-
-   ```bash
-   LR=$(chk3sql -tAc "SELECT local_ref FROM attempts WHERE transaction_id = '$TX'")
-   docker compose logs -t --no-color autorizacao | grep "$LR"
-   ```
-
-5. **Se o estado for `Indeterminada`:**
-   - deve existir um `warn` "Gateway sem resposta no prazo para localRef …" com o mesmo `localRef`;
-   - o `cartao` mostra o `/authorize` com cerca de 3000 ms.
-6. **Se o estado ficou em `AutorizacaoSolicitada`:**
-   - procure `fail: Falha ao registrar resultado da localRef …` no `autorizacao`;
+3. **Confira o estado final no banco**: a consulta "uma transação completa" mostra estado, `local_ref`, código do Gateway e evento no outbox.
+4. **Se o estado for `Indeterminada`:**
+   - deve haver `autorizacao passo=11-12 … Indeterminada_timeout_12b` e o Warning "Gateway sem resposta no prazo";
+   - no `gateway-mock` aparece `timeout_simulado_cliente_desistiu`.
+5. **Se o estado ficar em `AutorizacaoSolicitada`:**
+   - procure `autorizacao passo=13 … falha_registro` e o erro `Falha ao registrar resultado …`;
    - a reconciliação (worker, passo 15) está fora do POC.
 
-Saída real do passo 3 para a transação acima (`01a2145c-1506-…`, janela `20:18:28Z .. 20:18:29Z`), ordenada por horário e resumida às linhas `End`. O comando também devolve mais três linhas (409, 409 e 401), que são os testes 10b e 6a do smoke e foram omitidas aqui:
+Saída real do passo 2 (tabela) na VPS, transação **aprovada feita no navegador**. São 18 linhas e todos os containers de aplicação aparecem:
 
 ```
-opcoes-1       | 2026-11-25T20:18:28.773621229Z       End processing HTTP request after 4.7711ms - 200     (6)
-opcoes-1       | 2026-11-25T20:18:28.786572451Z       End processing HTTP request after 2.5803ms - 200     (6, reapresentação)
-opcoes-1       | 2026-11-25T20:18:28.804180458Z       End processing HTTP request after 5.929ms - 200      (7)
-cartao-1       | 2026-11-25T20:18:28.818779971Z       End processing HTTP request after 3.9278ms - 200     (8)
-autorizacao-1  | 2026-11-25T20:18:28.847597101Z       End processing HTTP request after 7.7711ms - 201     (10)
-autorizacao-1  | 2026-11-25T20:18:28.851165424Z       End processing HTTP request after 3.2914ms - 200     (11-12)
-autorizacao-1  | 2026-11-25T20:18:28.856639922Z       End processing HTTP request after 5.3065ms - 200     (13)
-cartao-1       | 2026-11-25T20:18:28.857312915Z       End processing HTTP request after 21.132ms - 200     (9 → 14)
+2026-11-25T20:44:18.469Z  integration   2-4    3c_criada                               201  7
+2026-11-25T20:44:18.471Z  canal         1-4    sessao_Criada_frame_embutido_http201    200  11
+2026-11-25T20:44:19.974Z  integration   6      valida                                  200  3
+2026-11-25T20:44:19.975Z  opcoes        6      valida                                  200  11
+2026-11-25T20:44:21.731Z  integration   6      valida                                  200  3
+2026-11-25T20:44:21.732Z  opcoes        6      valida                                  200  4
+2026-11-25T20:44:22.376Z  integration   7      emitida                                 200  6
+2026-11-25T20:44:22.377Z  opcoes        7      credencial_digitacao_emitida            200  8
+2026-11-25T20:44:22.757Z  integration   8      valida                                  200  3
+2026-11-25T20:44:22.759Z  cartao        8      pagina_digitacao_entregue               200  6
+2026-11-25T20:44:24.441Z  autorizacao   9      validacao_ok                            null 0
+2026-11-25T20:44:24.449Z  integration   10     10c_registrada                          201  7
+2026-11-25T20:44:24.451Z  autorizacao   10     10c_registrada                          201  9
+2026-11-25T20:44:24.454Z  gateway-mock  11-12  approved_00                             200  0
+2026-11-25T20:44:24.455Z  autorizacao   11-12  Autorizada_codigo_00                    200  3
+2026-11-25T20:44:24.461Z  autorizacao   13     Autorizada_registrado                   null 6
+2026-11-25T20:44:24.461Z  integration   13     Autorizada_outbox_pagamento.autorizada  200  5
+2026-11-25T20:44:24.462Z  cartao        9-14   Autorizada                              200  23
 ```
 
-A coluna de passos foi anotada à mão. As linhas `End` não trazem a URL, e só se sabe qual é a chamada pela linha `Start` anterior.
+- A recusada (`01a21473-d968-…`) teve as mesmas 18 linhas, com `declined_05` / `Recusada_codigo_05` / `Recusada`.
+- A indeterminada (`01a21473-f707-…`) teve 19: as 18, mais o Warning do timeout. Ela traz `timeout_simulado_cliente_desistiu` (499, 3000 ms) / `Indeterminada_timeout_12b` (3002 ms) / `Indeterminada` (3020 ms).
 
-## Lacunas e proposta de correção (não implementada)
+## Teste automatizado: `scripts/logs-check.sh`
 
-**Lacunas:**
+O teste roda no `scripts/deploy.sh`, depois do smoke. Também dá para rodar à mão: `./scripts/logs-check.sh`.
 
-| Serviço | Tem `transactionId` no log? | Tem `localRef`? | O que falta |
-|---|---|---|---|
-| canal | não | não | id da sessão criada |
-| opcoes | não | não | passo (6/7), id e resultado |
-| cartao | não | não | passo (8/9), id e resultado (Autorizada/Recusada/Indeterminada não aparece) |
-| autorizacao | não | sim (13 e 12b) | `transactionId`, resultado e motivo do 9a |
-| integration | não | não | nada por requisição: 3a/3b/3c, 6a, 10a/10b/10c, 13 |
-| gateway-mock | não | não | nada por requisição |
-| postgres | n/a | n/a | não precisa; o estado está nas tabelas |
+1. Faz três transações completas **a partir do canal**, como o navegador faria: aprovada, recusada e indeterminada.
+2. Falha se aparecer nos logs:
+   - qualquer credencial `pc_`/`tc_`, snapshot ou fragment daquela execução (comparação exata);
+   - qualquer segredo do `.env`;
+   - PAN de teste, campos de cartão (`pan`, `cvv`, `expMonth`, `expYear`, `number`, `name`), `#pc=`, JWT ou base64url de JSON (`eyJ…`), `Bearer`, hash hex de 64 caracteres, ou o nome digitado no E2E.
+3. Falha se o `transactionId` de alguma das três não aparecer em **cada** serviço com os passos esperados:
+   - canal `1-4`;
+   - opcoes `6 7`;
+   - cartao `8 9-14`;
+   - integration `2-4 6 7 8 10 13`;
+   - autorizacao `9 10 11-12 13`;
+   - gateway-mock `11-12`.
+4. Falha se o `X-Correlation-Id` recebido não for o transactionId do passo 7 em diante (exceção: cartao passo 8; ver acima).
 
-Outras lacunas:
-- Sem formato estruturado (JSON) nem `TraceId` nas linhas. Cada passo é uma requisição separada do navegador, então nem o `traceparent` que o HttpClient já propaga ligaria a transação inteira.
-- O ajuste `Logging__LogLevel__System.Net.Http.HttpClient=Warning` do compose não está surtindo efeito (as linhas `info` do HttpClient aparecem). Se for "corrigido" sem a proposta abaixo, some o único rastro por requisição.
+`LOGS_SINCE=<UTC ISO> ./scripts/logs-check.sh` amplia a busca de dados sensíveis, por exemplo para incluir um E2E no navegador rodado antes.
 
-**Menor mudança proposta** (estimativa: cerca de 40 linhas, sem mudar contratos):
+## O que ainda não aparece no log, e por quê
 
-1. **Log estruturado:** em `src/Shared`, um `builder.Logging.AddJsonConsole(o => o.IncludeScopes = true)` comum aos seis apps. Cada linha passa a ter `Timestamp`, `Category`, `TraceId` e os campos abaixo.
-2. **Correlation id = `transactionId`**, que já existe e já volta nas respostas da Integration (passos 3/4, 6, 8 e 10). Uma linha `Information` por passo, com campos fixos:
-   `chk3 passo={Passo} transactionId={TransactionId} localRef={LocalRef} resultado={Resultado} ms={Ms}`
-   - **integration:** 3a/3b/3c, 6/6a, 7, 8, 10a/10b/10c e 13 (com estado e `event_type` do outbox).
-   - **opcoes:** 6 e 7, com o `transactionId` da resposta da Integration (em 401, `transactionId` vazio e `resultado=recusada`).
-   - **cartao:** 8 e 9/14, usando o `transactionId` da validação do passo 8 e o resultado devolvido pelo `autorizacao`.
-   - **autorizacao:** 9 (só o código do 9a, nunca dado de cartão), 10, 12 e 13. Leva `transactionId` (`snap.Sid`) e `localRef`, e o aviso de timeout passa a incluir o `transactionId`.
-   - **gateway-mock:** `reference` (= `localRef`), resultado e código.
-   - **canal:** `transactionId` e status do `POST /sessions`.
-3. **Header `X-Correlation-Id: <transactionId>`** nas chamadas entre serviços a partir do passo 8, mais um `BeginScope` no servidor que o recebe. É opcional, porque o item 2 já resolve.
-4. **Regras de segurança:** nunca registrar PAN, CVV, validade, nome, `pc_`, `tc_`, snapshot, JWT nem o header `X-Internal-Key`. Um teste xUnit lê os logs do smoke e falha se achar algum desses padrões.
-
-Com isso, o rastreio vira:
-
-```bash
-docker compose logs -t --no-color | grep <transactionId>
-```
-
-Ele mostra todos os passos, de todos os serviços, sem depender de janela de tempo.
+- **Passo 5 (a Tela abre e lê o fragment):**
+  - acontece no navegador, e o fragment `#pc=` nunca chega ao servidor, por desenho;
+  - o `GET /` da Tela é estático e não é registrado;
+  - o primeiro registro da Tela é o passo 6.
+- **Passo 14 (`postMessage` para a Tela e para o canal):**
+  - acontece só no navegador;
+  - o que fica no servidor é a resposta que o originou (`cartao passo=9-14`).
+  - Erros de tela no navegador (ex.: falha de rede mostrada ao usuário) não são enviados ao servidor.
+- **Passos 1, 2, 3 e 4 e passos 11 e 12 em linhas agrupadas:**
+  - 1-4: o canal registra a ida e volta do `POST /sessions`, e a Integration registra o 2-4 com o resultado do 3 (3a/3b/3c);
+  - 11-12: a chamada ao Gateway e a resposta formam uma operação só.
+- **`X-Correlation-Id` antes do transactionId:**
+  - no `POST /sessions` e no passo 6, o header ainda não é o transactionId (gerado no canal / na Tela);
+  - no passo 8, a navegação do iframe não leva header;
+  - nos três casos, as linhas trazem o `transactionId` no campo próprio, então o grep acha todas.
+- **Retenção:**
+  - os logs ficam no driver padrão do Docker (`json-file`), sem agregação;
+  - somem quando o container é recriado (todo deploy).
+  - Para guardar, seria preciso um coletor (ex.: Loki/LGTM) ou `logging.options` com rotação. Está fora do escopo do POC.
+- **Escopos do ASP.NET:**
+  - o .NET acrescenta `RequestPath` (path bruto) e `TraceId`;
+  - nos fluxos do POC, o path não tem dado sensível (o máximo é o `localRef` no passo 13), e query string é recusada antes;
+  - a linha `chk3` usa só o padrão da rota.
