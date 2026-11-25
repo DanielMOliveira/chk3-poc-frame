@@ -24,31 +24,39 @@ public static partial class Endpoints
 
     static IResult Err(int status, string code) => Results.Json(new { erro = code }, statusCode: status);
 
+    // Marca o passo para a linha de rastreio (sai no fim da requisição, com status e duração). Sem dado sensível.
+    static IResult M(HttpContext ctx, string passo, Guid? tx, string resultado, IResult r, Guid? localRef = null, string? orderId = null)
+    {
+        Chk3Trace.Mark(ctx, passo, tx, resultado, localRef, orderId);
+        return r;
+    }
+
     // ---------- Passos 1 a 4: POST /sessions ----------
     public static async Task<IResult> CreateSession(HttpContext ctx, CreateSessionRequest? req, Store store, IntegrationConfig cfg)
     {
         string idemKey = ctx.Request.Headers["Idempotency-Key"].ToString();
-        if (!IdemKeyRx().IsMatch(idemKey)) return Err(400, "idempotency_key_invalida");
-        if (req is null) return Err(400, "corpo_invalido");
+        const string P = "2-4";
+        if (!IdemKeyRx().IsMatch(idemKey)) return M(ctx, P, null, "idempotency_key_invalida", Err(400, "idempotency_key_invalida"));
+        if (req is null) return M(ctx, P, null, "corpo_invalido", Err(400, "corpo_invalido"));
 
         // Passo 2: autoriza cliente/merchant (canal = sub do JWT, precisa estar ativo no cadastro).
         var channelId = ctx.User.FindFirst("sub")!.Value;
         var channel = await store.GetChannelAsync(channelId);
-        if (channel is null) return Err(403, "canal_nao_autorizado");
+        if (channel is null) return M(ctx, P, null, "2_canal_nao_autorizado", Err(403, "canal_nao_autorizado"));
 
         if (req.OrderId is null || !OrderIdRx().IsMatch(req.OrderId) || Card.ContainsPanPattern(req.OrderId))
-            return Err(400, "pedido_invalido");
-        if (req.AmountCents is <= 0 or > 1_000_000_000) return Err(400, "valor_invalido");
-        if (req.Currency != "BRL") return Err(400, "moeda_invalida");
+            return M(ctx, P, null, "2_pedido_invalido", Err(400, "pedido_invalido")); // orderId inválido não vai para o log
+        if (req.AmountCents is <= 0 or > 1_000_000_000) return M(ctx, P, null, "2_valor_invalido", Err(400, "valor_invalido"));
+        if (req.Currency != "BRL") return M(ctx, P, null, "2_moeda_invalida", Err(400, "moeda_invalida"));
 
         // 2a: camposAdicionais fora dos limites ou com padrão de PAN. Não registra e não loga o valor.
         var campos = req.CamposAdicionais ?? new();
         if (campos.Count > 10 || campos.Any(kv => !CampoKeyRx().IsMatch(kv.Key) || kv.Value is null
                 || kv.Value.Length > 255 || Card.ContainsPanPattern(kv.Value)))
-            return Err(400, "campos_adicionais_invalidos");
+            return M(ctx, P, null, "2a_campos_adicionais_invalidos", Err(400, "campos_adicionais_invalidos"));
 
         // 2b: parcelas acima do máximo do cadastro do canal.
-        if (req.Installments is { } n && (n < 1 || n > channel.MaxInstallments)) return Err(400, "parcelas_invalidas");
+        if (req.Installments is { } n && (n < 1 || n > channel.MaxInstallments)) return M(ctx, P, null, "2b_parcelas_invalidas", Err(400, "parcelas_invalidas"));
 
         // Passo 3: fingerprint do conteúdo para a admissão idempotente.
         var fingerprint = SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
@@ -81,7 +89,7 @@ public static partial class Endpoints
                 var (plain, hash) = Store.NewCredential("pc_");
                 await store.InsertCredentialAsync(c.Id, hash, "pagamento", c.ExpiresAt, conn, tx);
                 await tx.CommitAsync();
-                return Results.Json(SessionResponse(cfg, c.Id, "Criada", c.ExpiresAt, plain), statusCode: 201);
+                return M(ctx, P, c.Id, "3c_criada", Results.Json(SessionResponse(cfg, c.Id, "Criada", c.ExpiresAt, plain), statusCode: 201), orderId: req.OrderId);
             }
             await tx.RollbackAsync();
         }
@@ -93,7 +101,7 @@ public static partial class Endpoints
             """, new { channelId, idemKey });
 
         if (!CryptographicOperations.FixedTimeEquals(existing.Fingerprint, fingerprint))
-            return Err(409, "idempotency_key_com_conteudo_diferente"); // 3a
+            return M(ctx, P, existing.TransactionId, "3a_conteudo_diferente", Err(409, "idempotency_key_com_conteudo_diferente")); // 3a
 
         // 3b: sessão aberta, no TTL e sem tentativa: nova credencial, mesmo TTL (não estende).
         var hasAttempt = await conn.ExecuteScalarAsync<bool>(
@@ -102,10 +110,10 @@ public static partial class Endpoints
         {
             var (plain, hash) = Store.NewCredential("pc_");
             await store.InsertCredentialAsync(existing.TransactionId, hash, "pagamento", existing.ExpiresAt, conn);
-            return Results.Json(SessionResponse(cfg, existing.TransactionId, existing.State, existing.ExpiresAt, plain), statusCode: 200);
+            return M(ctx, P, existing.TransactionId, "3b_nova_credencial", Results.Json(SessionResponse(cfg, existing.TransactionId, existing.State, existing.ExpiresAt, plain), statusCode: 200), orderId: req.OrderId);
         }
         var state = existing.State == "Criada" && existing.ExpiresAt <= DateTime.UtcNow ? "Expirada" : existing.State;
-        return Results.Json(SessionResponse(cfg, existing.TransactionId, state, existing.ExpiresAt, null), statusCode: 200);
+        return M(ctx, P, existing.TransactionId, "3b_estado_" + state, Results.Json(SessionResponse(cfg, existing.TransactionId, state, existing.ExpiresAt, null), statusCode: 200), orderId: req.OrderId);
     }
 
     static object SessionResponse(IntegrationConfig cfg, Guid id, string state, DateTime expiresAt, string? credential) => new
@@ -122,7 +130,8 @@ public static partial class Endpoints
     public static async Task<IResult> ValidatePaymentCredential(HttpContext ctx, Store store)
     {
         var s = await store.FindOpenSessionByCredentialAsync(ctx.Request.Headers[Web.PaymentCredentialHeader], "pagamento");
-        if (s is null) return Err(401, "recusada"); // 6a sem detalhes
+        if (s is null) return M(ctx, "6", null, "6a_recusada", Err(401, "recusada")); // 6a sem detalhes
+        Chk3Trace.Mark(ctx, "6", s.TransactionId, "valida", orderId: s.OrderId);
         // 6b: dados só para exibição.
         return Results.Ok(new
         {
@@ -141,19 +150,21 @@ public static partial class Endpoints
     // ---------- Passo 7: revalida e emite credencial de digitação + snapshot assinado ----------
     public static async Task<IResult> IssueTypingCredential(HttpContext ctx, TypingCredentialRequest? req, Store store, SnapshotSigner signer)
     {
-        if (req?.Method != "cartao_credito") return Err(400, "meio_invalido");
+        if (req?.Method != "cartao_credito") return M(ctx, "7", null, "meio_invalido", Err(400, "meio_invalido"));
         var s = await store.FindOpenSessionByCredentialAsync(ctx.Request.Headers[Web.PaymentCredentialHeader], "pagamento");
-        if (s is null) return Err(401, "recusada");
+        if (s is null) return M(ctx, "7", null, "recusada", Err(401, "recusada"));
 
         await using var conn = await store.Db.OpenConnectionAsync();
         var issued = await conn.ExecuteScalarAsync<long>(
             "SELECT count(*) FROM credentials WHERE transaction_id = @id AND kind = 'digitacao'", new { id = s.TransactionId });
-        if (issued >= 20) return Err(429, "limite_credenciais"); // evita crescimento sem limite por sessão
+        if (issued >= 20) return M(ctx, "7", s.TransactionId, "limite_credenciais", Err(429, "limite_credenciais")); // evita crescimento sem limite por sessão
 
         var (plain, hash) = Store.NewCredential("tc_");
         await store.InsertCredentialAsync(s.TransactionId, hash, "digitacao", s.ExpiresAt, conn); // expira junto com a sessão
+        Chk3Trace.Mark(ctx, "7", s.TransactionId, "emitida");
         return Results.Ok(new
         {
+            transactionId = s.TransactionId, // para o rastreio na Tela de opções (não é segredo)
             typingCredential = plain,
             snapshot = signer.Sign(ToSnapshot(s)),
             expiresAt = DateTime.SpecifyKind(s.ExpiresAt, DateTimeKind.Utc),
@@ -167,7 +178,8 @@ public static partial class Endpoints
     public static async Task<IResult> ValidateTypingCredential(HttpContext ctx, Store store, SnapshotSigner signer)
     {
         var s = await store.FindOpenSessionByCredentialAsync(ctx.Request.Headers[Web.TypingCredentialHeader], "digitacao");
-        if (s is null) return Err(401, "recusada");
+        if (s is null) return M(ctx, "8", null, "recusada", Err(401, "recusada"));
+        Chk3Trace.Mark(ctx, "8", s.TransactionId, "valida");
         // Valor e moeda só para exibição na página de digitação (o navegador nunca envia valor no passo 9).
         return Results.Ok(new
         {
@@ -180,7 +192,7 @@ public static partial class Endpoints
     public static async Task<IResult> RegisterAttempt(HttpContext ctx, AttemptRequest? req, Store store)
     {
         string? plain = ctx.Request.Headers[Web.TypingCredentialHeader];
-        if (req is null || string.IsNullOrEmpty(plain) || plain.Length > 128) return Err(422, "sessao_invalida");
+        if (req is null || string.IsNullOrEmpty(plain) || plain.Length > 128) return M(ctx, "10", null, "10a_sessao_invalida", Err(422, "sessao_invalida"));
 
         await using var conn = await store.Db.OpenConnectionAsync();
         await using var tx = await conn.BeginTransactionAsync();
@@ -193,13 +205,13 @@ public static partial class Endpoints
             WHERE cr.hash = @hash AND cr.kind = 'digitacao'
             FOR UPDATE OF p
             """, new { hash = Store.Hash(plain) }, tx);
-        if (s is null) return Err(422, "sessao_invalida"); // 10a
+        if (s is null) return M(ctx, "10", null, "10a_sessao_invalida", Err(422, "sessao_invalida")); // 10a
 
         var attempt = await conn.QuerySingleOrDefaultAsync<AttemptRow>(
             "SELECT local_ref AS LocalRef, stage AS Stage, result AS Result FROM attempts WHERE transaction_id = @id",
             new { id = s.TransactionId }, tx);
         if (attempt is not null) // 10b: tentativa repetida, estado conhecido, sem novo envio
-            return Results.Json(new { erro = "tentativa_ja_registrada", state = s.State }, statusCode: 409);
+            return M(ctx, "10", s.TransactionId, "10b_ja_registrada_" + s.State, Results.Json(new { erro = "tentativa_ja_registrada", state = s.State }, statusCode: 409), attempt.LocalRef);
 
         var credOk = await conn.ExecuteScalarAsync<bool>(
             "SELECT expires_at > now() FROM credentials WHERE hash = @hash", new { hash = Store.Hash(plain) }, tx);
@@ -207,7 +219,7 @@ public static partial class Endpoints
                               && (s.Installments is null || s.Installments == req.Installments);
         if (!credOk || req.TransactionId != s.TransactionId || s.ExpiresAt <= DateTime.UtcNow || s.State != "Criada"
             || req.Brand is null || !s.Brands.Contains(req.Brand) || !installmentsOk)
-            return Err(422, "sessao_invalida"); // 10a: sessão inválida/divergente do snapshot, bandeira fora do snapshot ou parcelas inválidas
+            return M(ctx, "10", s.TransactionId, "10a_sessao_invalida", Err(422, "sessao_invalida")); // 10a: sessão inválida/divergente do snapshot, bandeira fora do snapshot ou parcelas inválidas
 
         // 10c: registra a tentativa única e muda o estado.
         var localRef = Guid.NewGuid();
@@ -217,6 +229,7 @@ public static partial class Endpoints
             UPDATE payment_sessions SET state = 'AutorizacaoSolicitada', updated_at = now() WHERE transaction_id = @id;
             """, new { id = s.TransactionId, localRef, brand = req.Brand, inst = req.Installments }, tx);
         await tx.CommitAsync();
+        Chk3Trace.Mark(ctx, "10", s.TransactionId, "10c_registrada", localRef, s.OrderId);
 
         // Valores do servidor, nunca do navegador.
         return Results.Json(new
@@ -227,9 +240,9 @@ public static partial class Endpoints
     }
 
     // ---------- Passo 13: registra resultado, evidência sanitizada e outbox atômicos ----------
-    public static async Task<IResult> RegisterResult(Guid localRef, ResultRequest? req, Store store)
+    public static async Task<IResult> RegisterResult(HttpContext ctx, Guid localRef, ResultRequest? req, Store store)
     {
-        if (req?.Result is not ("Autorizada" or "Recusada" or "Indeterminada")) return Err(400, "resultado_invalido");
+        if (req?.Result is not ("Autorizada" or "Recusada" or "Indeterminada")) return M(ctx, "13", null, "resultado_invalido", Err(400, "resultado_invalido"), localRef);
         var code = req.GatewayCode is { } g && GatewayCodeRx().IsMatch(g) ? g : null;
 
         await using var conn = await store.Db.OpenConnectionAsync();
@@ -243,7 +256,10 @@ public static partial class Endpoints
         {
             var prev = await conn.QuerySingleOrDefaultAsync<string?>(
                 "SELECT result FROM attempts WHERE local_ref = @localRef", new { localRef }, tx);
-            return prev == req.Result ? Results.Ok(new { state = prev }) : Err(409, "resultado_ja_registrado");
+            var known = await conn.QuerySingleOrDefaultAsync<Guid?>("SELECT transaction_id FROM attempts WHERE local_ref = @localRef", new { localRef }, tx);
+            return prev == req.Result
+                ? M(ctx, "13", known, "ja_registrado_" + prev, Results.Ok(new { state = prev }), localRef)
+                : M(ctx, "13", known, "resultado_ja_registrado", Err(409, "resultado_ja_registrado"), localRef);
         }
         await conn.ExecuteAsync("""
             UPDATE payment_sessions SET state = @result, updated_at = now() WHERE transaction_id = @txId;
@@ -251,6 +267,7 @@ public static partial class Endpoints
             VALUES (@txId, 'pagamento.' || lower(@result), jsonb_build_object('transactionId', @txId, 'state', @result));
             """, new { txId, result = req.Result }, tx);
         await tx.CommitAsync();
+        Chk3Trace.Mark(ctx, "13", txId, req.Result + "_outbox_pagamento." + req.Result.ToLowerInvariant(), localRef);
         return Results.Ok(new { state = req.Result });
     }
 }

@@ -2,7 +2,7 @@
 # Deploy via git, executado NA MÁQUINA ALVO, dentro do clone do repo:
 #   ./scripts/deploy.sh [ref]        # ref: commit, tag ou branch remota (padrão: origin/main)
 # Passos: git fetch -> checkout (detached) do ref -> docker compose up -d --build -> espera a
-# Integration -> ./scripts/smoke.sh. Qualquer falha interrompe com código != 0 e mostra o porquê.
+# Integration -> ./scripts/smoke.sh -> ./scripts/logs-check.sh. Qualquer falha interrompe com código != 0 e mostra o porquê.
 #
 # Credencial do git: o repo é público, então o fetch HTTPS não precisa de token. Se ficar privado,
 # passe o token SÓ no ambiente desta execução (DEPLOY_GIT_TOKEN); ele não é gravado no git config
@@ -51,6 +51,11 @@ if ! ./scripts/smoke.sh; then
   docker compose ps >&2
   docker compose logs --tail 30 >&2
   die "smoke falhou no commit $SHA."
+fi
+
+step "rastreio nos logs (transactionId em todos os serviços, sem dado sensível)"
+if ! ./scripts/logs-check.sh; then
+  die "logs-check falhou no commit $SHA."
 fi
 echo
 echo "DEPLOY OK: $SHA"

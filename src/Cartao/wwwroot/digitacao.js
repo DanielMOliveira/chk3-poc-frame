@@ -8,6 +8,7 @@
   const amount = parseInt(take('amount'), 10) || 0, currency = take('currency') || 'BRL';
   const maxInst = parseInt(take('max-installments'), 10) || 1, fixedInst = parseInt(take('fixed-installments'), 10) || 0;
   take('brands');
+  const txId = take('tx'); // transactionId: vai no X-Correlation-Id (rastreio, não é segredo)
   const deviceSessionId = window.chk3DeviceSessionId || null; // opcional (passo 8)
   const $ = (id) => document.getElementById(id);
   const post = (msg) => window.parent.postMessage(msg, parentOrigin);
@@ -69,7 +70,7 @@
       // Passo 9: nunca envia valor. O nome impresso não é enviado (campo do Gateway a confirmar).
       const r = await fetch('/api/authorize', {
         method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: ctrl.signal,
-        headers: { 'Content-Type': 'application/json', 'X-Typing-Credential': tc },
+        headers: { 'Content-Type': 'application/json', 'X-Typing-Credential': tc, ...(txId ? { 'X-Correlation-Id': txId } : {}) },
         body: JSON.stringify({ pan, expMonth: +mm, expYear: 2000 + +yy, cvv, installments: +sel.value, snapshot, deviceSessionId }),
       });
       status = r.status;

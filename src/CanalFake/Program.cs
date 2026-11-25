@@ -9,6 +9,7 @@ using Chk3.Shared;
 // Canal fake: simula o "Canal Workflow". Chama POST /sessions do servidor (token do canal nunca vai
 // ao navegador) e embute o iframe da Tela de opções.
 var builder = WebApplication.CreateBuilder(args);
+builder.AddChk3Logging("canal");
 builder.WebHost.ConfigureKestrel(k => k.AddServerHeader = false);
 
 var jwtSecret = Env.Secret("CHANNEL_JWT_SECRET");
@@ -18,6 +19,7 @@ var opcoesOrigin = Env.Required("OPCOES_PUBLIC_ORIGIN").TrimEnd('/');
 builder.Services.AddHttpClient("integration", c => { c.BaseAddress = new Uri(Env.Required("INTEGRATION_PUBLIC_URL")); c.Timeout = TimeSpan.FromSeconds(10); });
 
 var app = builder.Build();
+app.UseChk3Trace(); // gera o X-Correlation-Id antes do POST /sessions
 app.UseSecurityHeaders($"default-src 'none'; script-src 'self'; style-src 'self'; frame-src {opcoesOrigin}; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
 app.UseStaticFiles();
 
@@ -60,11 +62,17 @@ app.MapPost("/checkout", async (HttpContext ctx, IHttpClientFactory http) =>
     var json = await resp.Content.ReadAsStringAsync();
     var e = HtmlEncoder.Default;
     if (!resp.IsSuccessStatusCode)
+    {
+        Chk3Trace.Mark(ctx, "1-4", null, "erro_integration_" + (int)resp.StatusCode); // orderId recusado não vai para o log
         return Html($"<main class=\"store\"><div class=\"store-card\"><div class=\"h1\">Erro {(int)resp.StatusCode} ao criar a sessão</div><pre class=\"note-erro\">{e.Encode(json)}</pre><a class=\"link\" href=\"/\">Voltar</a></div></main>");
+    }
 
     using var doc = JsonDocument.Parse(json);
     var root = doc.RootElement;
     var frameUrl = root.GetProperty("frameUrl").GetString();
+    Guid? txId = root.TryGetProperty("transactionId", out var txEl) && txEl.ValueKind == JsonValueKind.String && txEl.TryGetGuid(out var g) ? g : null;
+    // A frameUrl (com #pc=) nunca vai para o log.
+    Chk3Trace.Mark(ctx, "1-4", txId, $"sessao_{root.GetProperty("state").GetString()}_{(frameUrl is null ? "sem_frame" : "frame_embutido")}_http{(int)resp.StatusCode}", orderId: f["orderId"].ToString());
     var hidden = $"""
         <input type="hidden" name="idemKey" value="{e.Encode(idemKey)}">
         <input type="hidden" name="orderId" value="{e.Encode(f["orderId"].ToString())}">

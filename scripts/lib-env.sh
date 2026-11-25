@@ -19,6 +19,7 @@ load_env() {
   # URLs de acesso do smoke: direto nas portas do host onde a stack roda. Independem das origens
   # públicas (que podem ser um túnel SSH no PC de quem testa ou um domínio HTTPS atrás de proxy).
   export INTEGRATION_URL=${INTEGRATION_URL:-http://$host:${INTEGRATION_HOST_PORT:-8083}}
+  export CANAL_URL=${CANAL_URL:-http://$host:${CANAL_HOST_PORT:-8080}}
   export OPCOES_URL=${OPCOES_URL:-http://$host:${OPCOES_HOST_PORT:-8081}}
   export CARTAO_URL=${CARTAO_URL:-http://$host:${CARTAO_HOST_PORT:-8082}}
 }

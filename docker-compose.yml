@@ -19,7 +19,6 @@ x-app: &app
     INTEGRATION_INTERNAL_URL: http://integration:8090
     Logging__LogLevel__Default: Information
     Logging__LogLevel__Microsoft.AspNetCore: Warning
-    Logging__LogLevel__System.Net.Http.HttpClient: Warning
 
 services:
   postgres:

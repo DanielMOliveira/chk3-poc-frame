@@ -37,7 +37,8 @@
       return await fetch(path, { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: ctrl.signal, ...opts });
     } catch { throw new Error('rede'); } finally { clearTimeout(t); }
   }
-  const api = (path) => call(path, { method: 'POST', headers: { 'X-Payment-Credential': pc } });
+  // X-Correlation-Id = transactionId (conhecido depois do passo 6). Só rastreio; não é segredo nem autoriza nada.
+  const api = (path) => call(path, { method: 'POST', headers: { 'X-Payment-Credential': pc, ...(sess && sess.transactionId ? { 'X-Correlation-Id': sess.transactionId } : {}) } });
   const brl = (cents, cur) => (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: cur || 'BRL' });
 
   function fillResult(d) {
@@ -84,6 +85,7 @@
     const form = document.createElement('form');
     form.method = 'POST'; form.action = `${cfg.cartaoOrigin}/digitacao`; form.target = 'cartao'; form.hidden = true;
     const i = document.createElement('input'); i.type = 'hidden'; i.name = 'tc'; i.value = tc; form.appendChild(i);
+    const c = document.createElement('input'); c.type = 'hidden'; c.name = 'cid'; c.value = sess.transactionId || ''; form.appendChild(c);
     document.body.appendChild(form);
     $('cardLoading').hidden = false;
     show('s-card');

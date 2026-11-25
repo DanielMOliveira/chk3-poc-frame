@@ -3,6 +3,7 @@ using Chk3.Shared;
 
 // API Autorização (CDE). Sem banco. PAN só em memória durante a requisição, nunca logado nem persistido.
 var builder = WebApplication.CreateBuilder(args);
+builder.AddChk3Logging("autorizacao");
 builder.WebHost.ConfigureKestrel(k => { k.AddServerHeader = false; k.Limits.MaxRequestBodySize = 16 * 1024; });
 
 var internalKey = Env.Required("INTERNAL_API_KEY");
@@ -17,6 +18,7 @@ builder.Services.AddHttpClient("integration", c => { c.BaseAddress = new Uri(int
 builder.Services.AddHttpClient("gateway", c => { c.BaseAddress = new Uri(gatewayUrl); c.DefaultRequestHeaders.Add("X-Gateway-Key", gatewayKey); c.Timeout = Timeout.InfiniteTimeSpan; });
 
 var app = builder.Build();
+app.UseChk3Trace();
 
 // Allowlist de PANs de teste (POC). PAN fora dela é recusado no 9a, nunca chega ao Gateway.
 string[] testPans = ["4111111111111111", "5555555555554444", "4000000000000002", "5105105105105100", "4000000000000119"];
@@ -25,6 +27,8 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpClientFactory http, ILogger<Program> log) =>
 {
+    var t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+    Guid? txId = null; // conhecido depois de verificar o snapshot
     if (!Web.FixedTimeEquals(ctx.Request.Headers[Web.InternalKeyHeader], internalKey)) return Results.StatusCode(401);
     string? typingCredential = ctx.Request.Headers[Web.TypingCredentialHeader];
     if (req is null || string.IsNullOrEmpty(typingCredential)) return Invalid("requisicao_invalida");
@@ -32,6 +36,8 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     // ---- Passo 9: verifica assinatura, sessão e expiração do snapshot; revalida Luhn, validade, CVV e bandeira ----
     var snap = signer.Verify(req.Snapshot, DateTimeOffset.UtcNow);
     if (snap is null) return Invalid("snapshot_invalido");                            // 9a
+    txId = snap.Sid;
+    Chk3Trace.SetCorrelation(ctx, snap.Sid); // daqui em diante o X-Correlation-Id é o transactionId
     var pan = req.Pan;
     var brand = pan is not null && pan.All(char.IsAsciiDigit) && Card.Luhn(pan) ? Card.Brand(pan) : null;
     var now = DateTime.UtcNow;
@@ -42,6 +48,7 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     if (!snap.Brands.Contains(brand)) { pan = null; return Invalid("bandeira_nao_aceita"); }        // 9a
     if (req.Installments < 1 || req.Installments > snap.MaxInstallments) { pan = null; return Invalid("parcelas_invalidas"); }
     if (testPansOnly && !testPans.Contains(pan)) { pan = null; return Invalid("pan_nao_permitido_no_poc"); }
+    Chk3Trace.Step(ctx, "9", txId, "validacao_ok", null, Chk3Trace.Since(t0));
     var deviceSessionId = req.DeviceSessionId is { Length: > 0 and <= 128 } d && d.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.') ? d : null;
 
     // ---- Passo 10: tentativa única atômica na Integration, sem PAN ----
@@ -51,18 +58,27 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
         Content = JsonContent.Create(new { transactionId = snap.Sid, brand, installments = req.Installments }),
     };
     attemptReq.Headers.Add(Web.TypingCredentialHeader, typingCredential);
+    var t10 = System.Diagnostics.Stopwatch.GetTimestamp();
     using var attemptResp = await integration.SendAsync(attemptReq);
     if ((int)attemptResp.StatusCode == 409)
     {
         pan = null; // 10b: estado conhecido, sem novo envio
         var known = await attemptResp.Content.ReadFromJsonAsync<KnownState>();
+        Chk3Trace.Step(ctx, "10", txId, "10b_ja_registrada_" + known?.State, 409, Chk3Trace.Since(t10));
         return Results.Json(new { status = "TentativaJaRegistrada", state = known?.State, transactionId = snap.Sid }, statusCode: 409);
     }
-    if (!attemptResp.IsSuccessStatusCode) { pan = null; return Results.Json(new { status = "SessaoInvalida" }, statusCode: 422); } // 10a
+    if (!attemptResp.IsSuccessStatusCode)
+    {
+        pan = null;
+        Chk3Trace.Step(ctx, "10", txId, "10a_sessao_invalida", (int)attemptResp.StatusCode, Chk3Trace.Since(t10));
+        return Results.Json(new { status = "SessaoInvalida", transactionId = snap.Sid }, statusCode: 422); // 10a
+    }
     var attempt = (await attemptResp.Content.ReadFromJsonAsync<Attempt>())!;
+    Chk3Trace.Step(ctx, "10", txId, "10c_registrada", (int)attemptResp.StatusCode, Chk3Trace.Since(t10), attempt.LocalRef, attempt.OrderId);
 
     // ---- Passos 11 e 12: autorização no Gateway com valor do servidor. Timeout -> indeterminado, sem reenvio ----
-    string result; string? code = null;
+    string result; string? code = null; int? gwStatus = null;
+    var t11 = System.Diagnostics.Stopwatch.GetTimestamp();
     try
     {
         using var cts = new CancellationTokenSource(gatewayTimeout);
@@ -74,6 +90,7 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
             card = new { number = pan, expMonth = req.ExpMonth, expYear = req.ExpYear, cvv = req.Cvv },
             deviceSessionId,
         }, cts.Token);
+        gwStatus = (int)gwResp.StatusCode;
         var gw = gwResp.IsSuccessStatusCode ? await gwResp.Content.ReadFromJsonAsync<GatewayResult>(cts.Token) : null;
         (result, code) = gw?.Result switch
         {
@@ -85,12 +102,14 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     catch (Exception ex) when (ex is OperationCanceledException or HttpRequestException)
     {
         result = "Indeterminada"; // 12b
-        log.LogWarning("Gateway sem resposta no prazo para localRef {LocalRef}", attempt.LocalRef);
+        log.LogWarning("Gateway sem resposta no prazo para localRef {LocalRef} transactionId {TransactionId}", attempt.LocalRef, attempt.TransactionId);
     }
     finally
     {
         pan = null; // 12: descarta PAN. Limitação: string .NET imutável, a memória só é liberada pelo GC.
     }
+    Chk3Trace.Step(ctx, "11-12", txId, gwStatus is null ? $"{result}_timeout_12b" : $"{result}_codigo_{code ?? "-"}", gwStatus, Chk3Trace.Since(t11), attempt.LocalRef);
+    var t13 = System.Diagnostics.Stopwatch.GetTimestamp();
 
     // ---- Passo 13: resultado na Integration, sem PAN ----
     var registered = false;
@@ -103,17 +122,23 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
         }
         catch (HttpRequestException) { await Task.Delay(200 * (i + 1)); }
     }
+    Chk3Trace.Step(ctx, "13", txId, registered ? result + "_registrado" : "falha_registro", null, Chk3Trace.Since(t13), attempt.LocalRef);
     if (!registered)
     {
         // Worker (passo 15) reconciliaria pela localRef. Fora do POC.
-        log.LogError("Falha ao registrar resultado da localRef {LocalRef}", attempt.LocalRef);
+        log.LogError("Falha ao registrar resultado da localRef {LocalRef} transactionId {TransactionId}", attempt.LocalRef, attempt.TransactionId);
         result = "Indeterminada";
     }
 
     // ---- Passo 14 ----
     return Results.Ok(new { status = result, transactionId = attempt.TransactionId });
 
-    static IResult Invalid(string code) => Results.Json(new { status = "ValidacaoFalhou", erro = code }, statusCode: 422);
+    // 9a: código do erro e transactionId (se o snapshot já foi verificado). Nunca dado de cartão.
+    IResult Invalid(string code)
+    {
+        Chk3Trace.Step(ctx, "9", txId, "9a_" + code, 422, Chk3Trace.Since(t0));
+        return Results.Json(new { status = "ValidacaoFalhou", erro = code, transactionId = txId }, statusCode: 422);
+    }
 });
 
 app.Run();

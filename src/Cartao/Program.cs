@@ -7,6 +7,7 @@ using Chk3.Shared;
 
 // Web App Cartão (endpoint pay, CDE). Iframe filho da Tela de opções. Não loga nem persiste PAN.
 var builder = WebApplication.CreateBuilder(args);
+builder.AddChk3Logging("cartao");
 builder.WebHost.ConfigureKestrel(k => { k.AddServerHeader = false; k.Limits.MaxRequestBodySize = 16 * 1024; });
 
 var internalKey = Env.Required("INTERNAL_API_KEY");
@@ -17,6 +18,7 @@ builder.Services.AddHttpClient("integration", c => { c.BaseAddress = new Uri(Env
 builder.Services.AddHttpClient("autorizacao", c => { c.BaseAddress = new Uri(Env.Required("AUTORIZACAO_URL")); c.DefaultRequestHeaders.Add(Web.InternalKeyHeader, internalKey); c.Timeout = TimeSpan.FromSeconds(20); });
 
 var app = builder.Build();
+app.UseChk3Trace();
 
 // frame-ancestors verifica TODOS os ancestrais: Tela de opções (pai) e canal (avô).
 app.UseSecurityHeaders($"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors {opcoesOrigin} {canalOrigin}");
@@ -36,13 +38,16 @@ app.MapPost("/digitacao", async (HttpContext ctx, IHttpClientFactory http) =>
     if (!ctx.Request.HasFormContentType) return Results.BadRequest();
     var form = await ctx.Request.ReadFormAsync();
     string tc = form["tc"].ToString();
-    if (tc.Length is 0 or > 128) return Html(ErrorPage(opcoesOrigin), 401);
+    // Correlation id vindo da Tela de opções (transactionId). Só para rastreio; validado como GUID.
+    if (Guid.TryParse(form["cid"].ToString(), out var cid)) Chk3Trace.SetCorrelation(ctx, cid);
+    if (tc.Length is 0 or > 128) { Chk3Trace.Mark(ctx, "8", null, "sem_credencial"); return Html(ErrorPage(opcoesOrigin), 401); }
 
     using var req = new HttpRequestMessage(HttpMethod.Post, "/internal/v1/typing-credential/validate");
     req.Headers.Add(Web.TypingCredentialHeader, tc);
     using var resp = await http.CreateClient("integration").SendAsync(req);
-    if (!resp.IsSuccessStatusCode) return Html(ErrorPage(opcoesOrigin), 401);
+    if (!resp.IsSuccessStatusCode) { Chk3Trace.Mark(ctx, "8", null, "recusada_integration_" + (int)resp.StatusCode); return Html(ErrorPage(opcoesOrigin), 401); }
     var v = (await resp.Content.ReadFromJsonAsync<TypingValidation>())!;
+    Chk3Trace.Mark(ctx, "8", v.TransactionId, "pagina_digitacao_entregue");
 
     var e = HtmlEncoder.Default;
     string M(string name, object? value) => $"<meta name=\"chk3-{name}\" content=\"{e.Encode(value?.ToString() ?? "")}\">";
@@ -59,6 +64,7 @@ app.MapPost("/digitacao", async (HttpContext ctx, IHttpClientFactory http) =>
         {{M("max-installments", v.MaxInstallments)}}
         {{M("fixed-installments", v.FixedInstallments)}}
         {{M("brands", string.Join(",", v.Brands ?? []))}}
+        {{M("tx", v.TransactionId)}}
         <title>Dados do cartão</title>
         <link rel="stylesheet" href="/mp-base.css"><link rel="stylesheet" href="/digitacao.css">
         <script src="/antifraude-fake.js"></script>
@@ -103,10 +109,13 @@ app.MapPost("/digitacao", async (HttpContext ctx, IHttpClientFactory http) =>
 app.MapPost("/api/authorize", async (HttpContext ctx, IHttpClientFactory http) =>
 {
     string tc = ctx.Request.Headers[Web.TypingCredentialHeader].ToString();
-    if (tc.Length is 0 or > 128) return Results.Json(new { status = "SessaoInvalida" }, statusCode: 401);
+    if (tc.Length is 0 or > 128) { Chk3Trace.Mark(ctx, "9", null, "sem_credencial"); return Results.Json(new { status = "SessaoInvalida" }, statusCode: 401); }
     var k = Key(tc);
     if (failures.TryGetValue(k, out var f) && f >= MaxFailures)
+    {
+        Chk3Trace.Mark(ctx, "9", Guid.TryParse(Chk3Trace.Current, out var c) ? c : null, "9a_limite_de_tentativas");
         return Results.Json(new { status = "LimiteDeTentativas" }, statusCode: 429);
+    }
 
     using var body = new StreamContent(ctx.Request.Body);
     body.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
@@ -115,6 +124,17 @@ app.MapPost("/api/authorize", async (HttpContext ctx, IHttpClientFactory http) =
     using var resp = await http.CreateClient("autorizacao").SendAsync(req);
     var json = await resp.Content.ReadAsStringAsync();
     if ((int)resp.StatusCode == 422 && json.Contains("ValidacaoFalhou")) failures.AddOrUpdate(k, 1, (_, n) => n + 1);
+    // Resultado devolvido ao navegador (vira postMessage no passo 14). Só status e transactionId.
+    try
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var r = doc.RootElement;
+        Guid? tx = r.TryGetProperty("transactionId", out var t) && t.ValueKind == System.Text.Json.JsonValueKind.String && t.TryGetGuid(out var g) ? g : null;
+        var st = r.TryGetProperty("status", out var s) && s.ValueKind == System.Text.Json.JsonValueKind.String ? s.GetString() : null;
+        var erro = r.TryGetProperty("erro", out var e) && e.ValueKind == System.Text.Json.JsonValueKind.String ? e.GetString() : null;
+        Chk3Trace.Mark(ctx, "9-14", tx, erro is null ? st ?? "?" : $"{st}_{erro}");
+    }
+    catch (System.Text.Json.JsonException) { Chk3Trace.Mark(ctx, "9-14", null, "resposta_invalida"); }
     return Results.Content(json, "application/json", Encoding.UTF8, (int)resp.StatusCode);
 });
 

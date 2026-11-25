@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.AddChk3Logging("integration");
 
 // Duas portas: pública (só POST /sessions, publicada pelo compose) e interna (endpoints do passo 6 a 13,
 // só na rede interna do compose). No desenho v7 a interna seria private endpoint + MI.
@@ -58,6 +59,7 @@ builder.Services.AddRateLimiter(o =>
 });
 
 var app = builder.Build();
+app.UseChk3Trace();
 await Migrator.RunAsync(app.Services.GetRequiredService<NpgsqlDataSource>(), app.Logger);
 
 app.UseSecurityHeaders("default-src 'none'; frame-ancestors 'none'");
