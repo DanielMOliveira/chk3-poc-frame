@@ -313,7 +313,7 @@ De outra máquina, por SSH:
 
 ```bash
 scripts/deploy-remote.sh <ssh-host> <dir-do-app> [ref]
-# ex.: scripts/deploy-remote.sh vps /home/grokbot/apps/chk3-poc-frame origin/main
+# ex.: scripts/deploy-remote.sh vps /home/daniel/projetos/chk3-poc-frame origin/main
 ```
 
 O `deploy-remote.sh` faz o fetch no alvo e executa o `deploy.sh` **da versão do ref**, então o próprio script também é atualizado.
@@ -322,5 +322,7 @@ O `deploy-remote.sh` faz o fetch no alvo e executa o `deploy.sh` **da versão do
 - exporte `DEPLOY_GIT_TOKEN` (token só de leitura) na máquina que dispara o deploy;
 - o `deploy-remote.sh` envia o token por **stdin** ao ambiente do deploy remoto, que o usa só num `git -c credential.helper=... fetch`;
 - o token não vai para a linha de comando, para o histórico, para o `git config` nem para a URL do remote.
+
+Na VPS o app fica em `/home/daniel/projetos/chk3-poc-frame`. O nome do projeto compose é fixo (`name: chk3-poc-frame` no `docker-compose.yml`), então mover o diretório não troca o nome dos containers nem o volume do Postgres (`chk3-poc-frame_pgdata`).
 
 O `.env` da VPS nunca é versionado. Gere com `init-env.sh` e ajuste portas e origens conforme o modo de acesso.

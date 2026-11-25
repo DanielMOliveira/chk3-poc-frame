@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Dispara o deploy numa máquina remota por SSH (o deploy em si é o scripts/deploy.sh do alvo).
 #   scripts/deploy-remote.sh <ssh-host> <dir-do-app-no-alvo> [ref]
-# Ex.: scripts/deploy-remote.sh vps /home/grokbot/apps/chk3-poc-frame origin/main
+# Ex.: scripts/deploy-remote.sh vps /home/daniel/projetos/chk3-poc-frame origin/main
 # Se DEPLOY_GIT_TOKEN estiver definido localmente (repo privado), ele vai por stdin para o
 # ambiente do deploy remoto: não aparece na linha de comando, no histórico nem no git config.
 set -euo pipefail

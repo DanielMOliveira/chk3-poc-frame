@@ -1,4 +1,7 @@
 # POC CHK3 frame v7. Sem Front Door, APIM e Identity Server.
+# Nome fixo do projeto compose: containers e volume (chk3-poc-frame_pgdata) não dependem do nome do diretório.
+# Para rodar duas cópias na mesma máquina: COMPOSE_PROJECT_NAME=outro-nome (tem precedência sobre name:).
+name: chk3-poc-frame
 # Redes espelham a segmentação do desenho: "fora" (fora da CDE), "cde", "vpn" (até o Gateway) e "dados".
 x-app: &app
   build: { context: ., dockerfile: Dockerfile }
