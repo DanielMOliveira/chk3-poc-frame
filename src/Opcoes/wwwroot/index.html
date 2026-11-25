@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pagamento</title>
+  <link rel="stylesheet" href="/opcoes.css">
+  <script src="/opcoes.js" defer></script>
+</head>
+<body>
+  <main>
+    <section id="loading">Carregando...</section>
+    <section id="erro" hidden><p>Não foi possível abrir o pagamento. Volte à loja e tente de novo.</p></section>
+    <section id="opcoes" hidden>
+      <h1 id="merchant"></h1>
+      <p id="resumo"></p>
+      <p id="bandeiras"></p>
+      <fieldset>
+        <legend>Meio de pagamento</legend>
+        <label><input type="radio" name="meio" value="cartao_credito" checked> Cartão de crédito</label>
+      </fieldset>
+      <label id="parcelas-wrap">Parcelas <select id="parcelas"></select></label>
+      <button id="continuar" type="button">Continuar</button>
+    </section>
+    <section id="digitacao" hidden>
+      <iframe name="cartao" id="cartao" title="Dados do cartão" allow="payment"></iframe>
+    </section>
+    <section id="resultado" hidden><p id="resultado-msg" role="status"></p></section>
+  </main>
+</body>
+</html>

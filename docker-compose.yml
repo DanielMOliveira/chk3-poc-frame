@@ -1,0 +1,104 @@
+# POC CHK3 frame v7. Sem Front Door, APIM e Identity Server.
+# Redes espelham a segmentação do desenho: "fora" (fora da CDE), "cde", "vpn" (até o Gateway) e "dados".
+x-app: &app
+  build: { context: ., dockerfile: Dockerfile }
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: [no-new-privileges:true]
+  environment: &env
+    INTERNAL_API_KEY: ${INTERNAL_API_KEY:?defina no .env}
+    SNAPSHOT_SIGNING_KEY: ${SNAPSHOT_SIGNING_KEY:?defina no .env}
+    CANAL_PUBLIC_ORIGIN: ${CANAL_PUBLIC_ORIGIN:?defina no .env}
+    OPCOES_PUBLIC_ORIGIN: ${OPCOES_PUBLIC_ORIGIN:?defina no .env}
+    CARTAO_PUBLIC_ORIGIN: ${CARTAO_PUBLIC_ORIGIN:?defina no .env}
+    INTEGRATION_INTERNAL_URL: http://integration:8090
+    Logging__LogLevel__Default: Information
+    Logging__LogLevel__Microsoft.AspNetCore: Warning
+    Logging__LogLevel__System.Net.Http.HttpClient: Warning
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?defina no .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina no .env}
+      POSTGRES_DB: ${POSTGRES_DB:?defina no .env}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    networks: [dados]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  integration:   # Integration API: passos 2-4 (público) e 6, 7, 8, 10, 13 (interno)
+    <<: *app
+    build: { context: ., args: { PROJECT: Integration } }
+    environment:
+      <<: *env
+      POSTGRES_CONNECTION: Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}
+      CHANNEL_JWT_SECRET: ${CHANNEL_JWT_SECRET:?defina no .env}
+      CHANNEL_JWT_ISSUER: ${CHANNEL_JWT_ISSUER:?defina no .env}
+    ports: ["${BIND_ADDR:-127.0.0.1}:8083:8080"]   # só a porta pública. A 8090 (interna) não é publicada.
+    networks: [fora, cde, dados]
+    depends_on: { postgres: { condition: service_healthy } }
+
+  opcoes:        # Tela de opções (fora da CDE): passos 5-7 e 14
+    <<: *app
+    build: { context: ., args: { PROJECT: Opcoes } }
+    ports: ["${BIND_ADDR:-127.0.0.1}:8081:8080"]
+    networks: [fora]
+    depends_on: [integration]
+
+  cartao:        # Web App Cartão (CDE, endpoint pay): passos 8, 9 e 14
+    <<: *app
+    build: { context: ., args: { PROJECT: Cartao } }
+    environment:
+      <<: *env
+      AUTORIZACAO_URL: http://autorizacao:8080
+    ports: ["${BIND_ADDR:-127.0.0.1}:8082:8080"]
+    networks: [cde]
+    depends_on: [integration, autorizacao]
+
+  autorizacao:   # API Autorização (CDE, sem banco): passos 9-13. Sem porta publicada.
+    <<: *app
+    build: { context: ., args: { PROJECT: Autorizacao } }
+    environment:
+      <<: *env
+      GATEWAY_URL: http://gateway-mock:8080
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:?defina no .env}
+      GATEWAY_TIMEOUT_MS: ${GATEWAY_TIMEOUT_MS:-3000}
+      POC_TEST_PANS_ONLY: "true"
+    networks: [cde, vpn]
+
+  gateway-mock:  # Gateway MCN simulado (passos 11-12). Só alcançável pela API Autorização.
+    <<: *app
+    build: { context: ., args: { PROJECT: GatewayMock } }
+    environment:
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:?defina no .env}
+      GATEWAY_MOCK_TIMEOUT_DELAY_MS: ${GATEWAY_MOCK_TIMEOUT_DELAY_MS:-10000}
+      Logging__LogLevel__Microsoft.AspNetCore: Warning
+    networks: [vpn]
+
+  canal:         # Canal fake (passos 1 e 4 do lado do canal)
+    <<: *app
+    build: { context: ., args: { PROJECT: CanalFake } }
+    environment:
+      <<: *env
+      CHANNEL_JWT_SECRET: ${CHANNEL_JWT_SECRET:?defina no .env}
+      CHANNEL_JWT_ISSUER: ${CHANNEL_JWT_ISSUER:?defina no .env}
+      INTEGRATION_PUBLIC_URL: http://integration:8080
+    ports: ["${BIND_ADDR:-127.0.0.1}:8080:8080"]
+    networks: [fora]
+    depends_on: [integration]
+
+networks:
+  fora: {}
+  cde: {}
+  vpn: { internal: true }
+  dados: { internal: true }
+
+volumes:
+  pgdata: {}

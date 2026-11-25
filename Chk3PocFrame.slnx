@@ -1,0 +1,27 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/Autorizacao/">
+    <Project Path="src/Autorizacao/Chk3.Autorizacao.csproj" />
+  </Folder>
+  <Folder Name="/src/CanalFake/">
+    <Project Path="src/CanalFake/Chk3.CanalFake.csproj" />
+  </Folder>
+  <Folder Name="/src/Cartao/">
+    <Project Path="src/Cartao/Chk3.Cartao.csproj" />
+  </Folder>
+  <Folder Name="/src/GatewayMock/">
+    <Project Path="src/GatewayMock/Chk3.GatewayMock.csproj" />
+  </Folder>
+  <Folder Name="/src/Integration/">
+    <Project Path="src/Integration/Chk3.Integration.csproj" />
+  </Folder>
+  <Folder Name="/src/Opcoes/">
+    <Project Path="src/Opcoes/Chk3.Opcoes.csproj" />
+  </Folder>
+  <Folder Name="/src/Shared/">
+    <Project Path="src/Shared/Chk3.Shared.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Chk3.Tests/Chk3.Tests.csproj" />
+  </Folder>
+</Solution>
