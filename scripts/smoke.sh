@@ -8,8 +8,9 @@ source scripts/lib-env.sh
 load_env .env
 
 INTEGRATION=${INTEGRATION_URL}
-OPCOES=${OPCOES_PUBLIC_ORIGIN}
-CARTAO=${CARTAO_PUBLIC_ORIGIN}
+OPCOES=${OPCOES_URL}                    # acesso (porta do host)
+CARTAO=${CARTAO_URL}
+OPCOES_PUBLIC=${OPCOES_PUBLIC_ORIGIN}   # o que deve aparecer na frameUrl
 FAIL=0
 
 b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
@@ -39,7 +40,7 @@ run_case() { # run_case <nome> <pan> <status esperado>
   frame=$(jq -r .frameUrl <<<"$json")
   [[ "$frame" == *"?"* ]] && { echo "  FALHA frameUrl com query string"; FAIL=1; }
   pc=${frame#*#pc=}
-  check "credencial no fragment, não na query" yes "$([[ "$frame" == "$OPCOES/#pc="* ]] && echo yes || echo no)"
+  check "credencial no fragment, não na query" yes "$([[ "$frame" == "$OPCOES_PUBLIC/#pc="* ]] && echo yes || echo no)"
 
   # Passo 6 duas vezes: valida sem consumir
   check "passo 6 valida credencial" 200 "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$OPCOES/api/session" -H "X-Payment-Credential: $pc")"
@@ -52,7 +53,7 @@ run_case() { # run_case <nome> <pan> <status esperado>
 
   # Passo 8: página de digitação por POST, snapshot assinado vem no HTML
   local html snapshot
-  html=$(curl -s -X POST "$CARTAO/digitacao" --data-urlencode "tc=$tc" --data-urlencode "installments=1")
+  html=$(curl -s -X POST "$CARTAO/digitacao" --data-urlencode "tc=$tc")
   snapshot=$(grep -o 'name="chk3-snapshot" content="[^"]*"' <<<"$html" | sed 's/.*content="//;s/"$//')
   check "passo 8 devolve snapshot assinado" yes "$([[ -n "$snapshot" ]] && echo yes || echo no)"
 

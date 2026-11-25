@@ -16,6 +16,9 @@ load_env() {
   export CANAL_PUBLIC_ORIGIN=${CANAL_PUBLIC_ORIGIN:-http://localhost:${CANAL_HOST_PORT:-8080}}
   export OPCOES_PUBLIC_ORIGIN=${OPCOES_PUBLIC_ORIGIN:-http://localhost:${OPCOES_HOST_PORT:-8081}}
   export CARTAO_PUBLIC_ORIGIN=${CARTAO_PUBLIC_ORIGIN:-http://localhost:${CARTAO_HOST_PORT:-8082}}
-  # A Integration não tem origem pública no navegador: o smoke a chama direto na porta do host.
+  # URLs de acesso do smoke: direto nas portas do host onde a stack roda. Independem das origens
+  # públicas (que podem ser um túnel SSH no PC de quem testa ou um domínio HTTPS atrás de proxy).
   export INTEGRATION_URL=${INTEGRATION_URL:-http://$host:${INTEGRATION_HOST_PORT:-8083}}
+  export OPCOES_URL=${OPCOES_URL:-http://$host:${OPCOES_HOST_PORT:-8081}}
+  export CARTAO_URL=${CARTAO_URL:-http://$host:${CARTAO_HOST_PORT:-8082}}
 }
