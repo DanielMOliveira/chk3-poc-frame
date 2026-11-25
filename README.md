@@ -296,6 +296,7 @@ src/CanalFake     canal fake
 tests/Chk3.Tests  testes
 scripts/          init-env.sh, smoke.sh, test.sh, lib-env.sh, browser-e2e.mjs, deploy.sh, deploy-remote.sh
 docs/modelo-visual/ modelo visual de referência (HTML do Daniel)
+docs/operacao/    logs-e-rastreio.md: containers, logs, SQL e rastreio de transação
 ```
 
 ## Deploy via git
@@ -322,6 +323,8 @@ O `deploy-remote.sh` faz o fetch no alvo e executa o `deploy.sh` **da versão do
 - exporte `DEPLOY_GIT_TOKEN` (token só de leitura) na máquina que dispara o deploy;
 - o `deploy-remote.sh` envia o token por **stdin** ao ambiente do deploy remoto, que o usa só num `git -c credential.helper=... fetch`;
 - o token não vai para a linha de comando, para o histórico, para o `git config` nem para a URL do remote.
+
+Para acompanhar containers, logs e transações, ver [`docs/operacao/logs-e-rastreio.md`](docs/operacao/logs-e-rastreio.md).
 
 Na VPS o app fica em `/home/daniel/projetos/chk3-poc-frame`. O nome do projeto compose é fixo (`name: chk3-poc-frame` no `docker-compose.yml`), então mover o diretório não troca o nome dos containers nem o volume do Postgres (`chk3-poc-frame_pgdata`).
 
