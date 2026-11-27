@@ -156,3 +156,15 @@ chk3gw passo=12 servico=autorizacao transactionId=<tx> localRef=<lr> destino=rea
 Máscara (`src/Autorizacao/GatewayLogMask.cs`): `cardNumber` → BIN6 + `*` + últimos 4; `cardSecurityCode`, `cardExpirationDate`, `cardHolder`, `merchantId`, `merchantKey` e billing pessoal (`customerIdentity`, `name`, `address`, `address2`, `postalCode`, `phone`, `email`) → `***`; qualquer outro valor com 12+ dígitos → BIN6/últimos 4. Vale também para resposta XML/JSON de formato desconhecido (estrutura mantida). O `logs-check.sh` confere isso e procura a chave e o merchantId do `.env` em todos os logs.
 
 **27/11/2026, noite:** `<environment>` adicionado ao `<verification>`, logo depois da `<merchantKey>` (pedido do Daniel; `GATEWAY_ENVIRONMENT=1`, não é mascarado no log). O mock aceita o `<verification>` com ou sem `<environment>` (numérico).
+
+**Resposta do Gateway real (observada em 27/11/2026, host de homologação):** HTTP 200, `Content-Type: application/xml`, com o XML de negócio **serializado como string** pelo ASP.NET Web API:
+
+```xml
+<string xmlns="http://schemas.microsoft.com/2003/10/Serialization/">&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;transaction-response id="1" versao="1.0"&gt;&lt;transactionId /&gt;
+&lt;status&gt;&lt;code&gt;409&lt;/code&gt;&lt;message&gt;ERROR - 409&lt;/message&gt;&lt;/status&gt; ...
+</string>
+```
+
+- A API Autorização desembrulha o `<string>` (uma vez, com o parser seguro) e lê `transaction-response/status/code`, `status/message` e `transactionId` (referência do Gateway). O log mascarado mostra o XML interno com prefixo `string:`.
+- **O significado dos códigos não foi informado.** Aprovado/recusado só pelas listas `GATEWAY_APPROVED_CODES` / `GATEWAY_DECLINED_CODES` do `.env` (vazias por padrão); qualquer outro código fica **Indeterminada**, com o código no `resultado` (`Indeterminada_codigo_409_real`) e gravado como `gatewayCode`.
