@@ -31,6 +31,7 @@ public class GatewayLogMaskTests
         Assert.Equal("***", x.Element("verification")!.Element("merchantKey")!.Value);
         Assert.Equal("***", x.Element("verification")!.Element("merchantId")!.Value);
         Assert.Equal("22", p.Element("acquirer")!.Value);
+        Assert.Equal("PED-1", x.Element("authorize")!.Element("order")!.Element("reference")!.Value);
         Assert.Equal("São Paulo", x.Element("authorize")!.Element("billing")!.Element("city")!.Value);
     }
 

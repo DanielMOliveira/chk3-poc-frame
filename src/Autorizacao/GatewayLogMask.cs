@@ -42,6 +42,7 @@ public static partial class GatewayLogMask
         if (value.Length == 0) return value;
         if (CardNumber.Contains(n)) return MaskPan(value);
         if (Hidden.Contains(n)) return "***";
+        if (n is "reference" or "totalamount" or "amount") return value.Length > 64 ? value[..64] + "…" : value; // orderId/valor: já validados, não são dado de cartão
         value = LongDigits().Replace(value, m => MaskPan(m.Value));
         return value.Length > 200 ? value[..200] + "…" : value;
     }
