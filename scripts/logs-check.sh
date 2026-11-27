@@ -75,7 +75,7 @@ echo "== Dados sensíveis nos logs ($(wc -l <"$LOGS") linhas desde $SCAN_SINCE)"
 leak=0
 for v in "${SECRETS[@]}"; do [[ -n "$v" ]] && grep -qF -- "$v" "$LOGS" && leak=1; done
 [[ $leak == 0 ]] && ok "credenciais pc_/tc_, snapshot e fragment desta execução" || fail "credencial, snapshot ou fragment desta execução apareceu no log"
-for name in POSTGRES_PASSWORD CHANNEL_JWT_SECRET INTERNAL_API_KEY SNAPSHOT_SIGNING_KEY GATEWAY_API_KEY GATEWAY_MERCHANT_KEY WEBHOOK_SIGNING_SECRET GRAFANA_ADMIN_PASSWORD; do
+for name in POSTGRES_PASSWORD CHANNEL_JWT_SECRET INTERNAL_API_KEY SNAPSHOT_SIGNING_KEY GATEWAY_API_KEY GATEWAY_MERCHANT_ID GATEWAY_MERCHANT_KEY WEBHOOK_SIGNING_SECRET GRAFANA_ADMIN_PASSWORD; do
   v=${!name:-}; [[ -n "$v" ]] && grep -qF -- "$v" "$LOGS" && fail "segredo $name no log" || ok "sem $name"
 done
 declare -A PATTERNS=(
@@ -100,7 +100,7 @@ done
 
 # XML de ida/volta do Gateway (linhas chk3gw): cartão só BIN6+****+últimos 4; demais campos sensíveis = ***.
 GWX=$(jq -R -r 'fromjson? | select(.Category=="chk3.gateway") | .State.xml // empty' "$LOGS")
-bad=$( { grep -oE '<(cardSecurityCode|cardExpirationDate|cardHolder|merchantKey|customerIdentity|name|address|address2|phone|email|postalCode)>[^<]*<' <<<"$GWX" || true; } | { grep -v '>\*\*\*<' || true; } | sed -E 's/>.*/>/' | sort -u | tr '\n' ' ' || true)
+bad=$( { grep -oE '<(cardSecurityCode|cardExpirationDate|cardHolder|merchantId|merchantKey|customerIdentity|name|address|address2|phone|email|postalCode)>[^<]*<' <<<"$GWX" || true; } | { grep -v '>\*\*\*<' || true; } | sed -E 's/>.*/>/' | sort -u | tr '\n' ' ' || true)
 [[ -z "$bad" ]] && ok "XML do Gateway no log: CVV, validade, portador, chave e billing pessoal = ***" || fail "XML do Gateway com campo sem máscara: $bad"
 badpan=$( { grep -oE '<cardNumber>[^<]*<' <<<"$GWX" || true; } | { grep -vE '<cardNumber>[0-9]{6}\*+[0-9]{4}<' || true; } | wc -l)
 [[ $badpan == 0 ]] && ok "XML do Gateway no log: cardNumber = BIN6+****+últimos 4" || fail "cardNumber sem máscara no log ($badpan)"

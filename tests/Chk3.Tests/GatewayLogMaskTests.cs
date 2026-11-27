@@ -29,7 +29,7 @@ public class GatewayLogMaskTests
         Assert.Equal("***", p.Element("cardExpirationDate")!.Value);
         Assert.Equal("***", p.Element("cardHolder")!.Value);
         Assert.Equal("***", x.Element("verification")!.Element("merchantKey")!.Value);
-        Assert.Equal("chk3", x.Element("verification")!.Element("merchantId")!.Value);
+        Assert.Equal("***", x.Element("verification")!.Element("merchantId")!.Value);
         Assert.Equal("22", p.Element("acquirer")!.Value);
         Assert.Equal("São Paulo", x.Element("authorize")!.Element("billing")!.Element("city")!.Value);
     }

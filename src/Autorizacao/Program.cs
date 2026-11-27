@@ -117,7 +117,7 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
         var xml = GatewayXml.Build(merchant,
             new GatewayOrder(attempt.OrderId, attempt.AmountCents, attempt.Currency, attempt.Installments, attempt.Billing, attempt.UrlReturn, attempt.SoftDescriptor),
             new GatewayCard(pan!, holder, req.Cvv!, req.ExpMonth, req.ExpYear, brand!));
-        GwLog("11", "ida", null, GatewayLogMask.Mask(xml, merchant.MerchantKey), 0);
+        GwLog("11", "ida", null, GatewayLogMask.Mask(xml, merchant.MerchantKey, merchant.MerchantId), 0);
         using var msg = new HttpRequestMessage(HttpMethod.Post, target) { Content = new StringContent(xml, Encoding.UTF8) };
         msg.Content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(gatewayContentType);
         if (msg.Content.Headers.ContentType.CharSet is null) msg.Content.Headers.ContentType.CharSet = "utf-8";
@@ -128,7 +128,7 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
         var body = await ReadLimitedAsync(gwResp.Content, 64 * 1024, cts.Token);
         var doc = SafeXml.TryParse(body);
         formato = doc?.Root?.Name.LocalName ?? (string.IsNullOrWhiteSpace(body) ? "vazio" : "nao_xml");
-        GwLog("12", "volta", gwStatus, GatewayLogMask.Mask(body, merchant.MerchantKey), Chk3Trace.Since(t11),
+        GwLog("12", "volta", gwStatus, GatewayLogMask.Mask(body, merchant.MerchantKey, merchant.MerchantId), Chk3Trace.Since(t11),
             gwResp.Content.Headers.ContentType?.MediaType);
         var gw = gwResp.IsSuccessStatusCode ? GatewayXml.ParseResponse(doc) : (null, null);
         (result, code) = gw.Status switch

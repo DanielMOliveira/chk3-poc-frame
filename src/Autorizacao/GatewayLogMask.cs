@@ -8,7 +8,7 @@ namespace Chk3.Autorizacao;
 
 /// <summary>
 /// Máscara do XML (ou JSON/texto) trocado com o Gateway, para log/Grafana.
-/// cardNumber -> BIN6 + * + últimos 4; CVV, validade, portador, merchantKey e dados pessoais do billing -> ***.
+/// cardNumber -> BIN6 + * + últimos 4; CVV, validade, portador, merchantId/merchantKey e dados pessoais do billing -> ***.
 /// Em qualquer outro valor, sequência de 12+ dígitos (PAN, documento) vira BIN6/***/últimos 4.
 /// Vale para a resposta de formato desconhecido também (estrutura mantida, valores sensíveis mascarados).
 /// </summary>
@@ -20,7 +20,7 @@ public static partial class GatewayLogMask
     static readonly HashSet<string> Hidden =
     [
         "cardsecuritycode", "securitycode", "cvv", "cvc", "cvv2", "cardexpirationdate", "expirationdate", "expdate", "expiry",
-        "expmonth", "expyear", "cardholder", "holder", "holdername", "merchantkey", "key", "apikey", "password", "secret",
+        "expmonth", "expyear", "cardholder", "holder", "holdername", "merchantkey", "merchantid", "key", "apikey", "password", "secret",
         "token", "cardtoken", "customeridentity", "document", "cpf", "cnpj", "name", "address", "address2", "street",
         "phone", "email", "postalcode", "zipcode", "birthdate",
     ];
