@@ -9,6 +9,7 @@ COPY src/Cartao/*.csproj src/Cartao/
 COPY src/Autorizacao/*.csproj src/Autorizacao/
 COPY src/GatewayMock/*.csproj src/GatewayMock/
 COPY src/CanalFake/*.csproj src/CanalFake/
+COPY src/Worker/*.csproj src/Worker/
 COPY tests/Chk3.Tests/*.csproj tests/Chk3.Tests/
 RUN dotnet restore Chk3PocFrame.slnx
 COPY . .

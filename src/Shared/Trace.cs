@@ -89,9 +89,20 @@ public static partial class Chk3Trace
     static string Route(HttpContext ctx) => (ctx.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "nao_mapeada";
 
     static void Write(HttpContext ctx, string passo, Guid? tx, string resultado, int? status, long ms, Guid? localRef, string? orderId, string? rota) =>
+        Write(ctx.Items[ItemCid] as string, passo, tx, resultado, status, ms, localRef, orderId, rota);
+
+    static void Write(string? cid, string passo, Guid? tx, string resultado, int? status, long ms, Guid? localRef, string? orderId, string? rota) =>
         log.LogInformation(
             "chk3 passo={passo} servico={servico} transactionId={transactionId} localRef={localRef} orderId={orderId} resultado={resultado} status={status} duracaoMs={duracaoMs} correlationId={correlationId} rota={rota}",
-            passo, Servico, tx, localRef, orderId, resultado, status, ms, ctx.Items[ItemCid] as string, rota);
+            passo, Servico, tx, localRef, orderId, resultado, status, ms, cid, rota);
+
+    /// <summary>Linha chk3 fora de requisição HTTP (Worker). O correlation id é o transactionId, quando houver.</summary>
+    public static void Event(string passo, Guid? tx, string resultado, int? status, long duracaoMs, string? orderId = null)
+    {
+        var cid = tx?.ToString();
+        using var scope = log.BeginScope(new Scope(cid, Servico));
+        Write(cid, passo, tx, resultado, status, duracaoMs, null, orderId, null);
+    }
 
     /// <summary>Escopo de log: correlationId recebido (ou gerado) e serviço. ToString legível no JSON.</summary>
     sealed class Scope(string? cid, string servico) : IReadOnlyList<KeyValuePair<string, object?>>

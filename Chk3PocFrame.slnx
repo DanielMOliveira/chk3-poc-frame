@@ -21,6 +21,9 @@
   <Folder Name="/src/Shared/">
     <Project Path="src/Shared/Chk3.Shared.csproj" />
   </Folder>
+  <Folder Name="/src/Worker/">
+    <Project Path="src/Worker/Chk3.Worker.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Chk3.Tests/Chk3.Tests.csproj" />
   </Folder>
