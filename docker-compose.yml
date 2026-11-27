@@ -92,6 +92,8 @@ services:
       GATEWAY_METHOD_PARCELADO: ${GATEWAY_METHOD_PARCELADO:-2}
       GATEWAY_SAVE_CREDIT_CARD: ${GATEWAY_SAVE_CREDIT_CARD:-false}
       GATEWAY_ENVIRONMENT: ${GATEWAY_ENVIRONMENT-1}
+      GATEWAY_APPROVED_CODES: ${GATEWAY_APPROVED_CODES:-}
+      GATEWAY_DECLINED_CODES: ${GATEWAY_DECLINED_CODES:-}
     # saida: egress para o Gateway real (no v7 seria a VPN). vpn: o mock.
     networks: [cde, vpn, saida]
 

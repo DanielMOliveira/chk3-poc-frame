@@ -41,6 +41,9 @@ var merchant = new GatewayMerchant(
         var e when e.Length <= 4 && e.All(char.IsAsciiDigit) => e,
         _ => throw new InvalidOperationException("GATEWAY_ENVIRONMENT deve ser numérico (ou vazio para omitir)"),
     });
+// Códigos de retorno do Gateway real que significam aprovado/recusado (não informados ainda: vazio = Indeterminada).
+var approvedCodes = Env.Optional("GATEWAY_APPROVED_CODES", "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+var declinedCodes = Env.Optional("GATEWAY_DECLINED_CODES", "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
 var holderRx = new Regex(@"^[\p{L}\p{M} .'-]{2,60}$");
 
 builder.Services.AddHttpClient("integration", c => { c.BaseAddress = new Uri(integrationUrl); c.DefaultRequestHeaders.Add(Web.InternalKeyHeader, internalKey); c.Timeout = TimeSpan.FromSeconds(5); });
@@ -111,7 +114,7 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     Chk3Trace.Step(ctx, "10", txId, "10c_registrada", (int)attemptResp.StatusCode, Chk3Trace.Since(t10), attempt.LocalRef, attempt.OrderId);
 
     // ---- Passos 11 e 12: autorização no Gateway com valor do servidor. Timeout -> indeterminado, sem reenvio ----
-    string result; string? code = null; int? gwStatus = null; string formato = "-";
+    string result; string? code = null; int? gwStatus = null; string formato = "-"; string? gatewayRef = null;
     var toMock = mockPans.Contains(pan) || gatewayUrl == mockUrl;
     var target = toMock ? mockUrl : gatewayUrl;
     var destino = toMock ? "mock" : "real";
@@ -136,12 +139,15 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
         formato = doc?.Root?.Name.LocalName ?? (string.IsNullOrWhiteSpace(body) ? "vazio" : "nao_xml");
         GwLog("12", "volta", gwStatus, GatewayLogMask.Mask(body, merchant.MerchantKey, merchant.MerchantId), Chk3Trace.Since(t11),
             gwResp.Content.Headers.ContentType?.MediaType);
-        var gw = gwResp.IsSuccessStatusCode ? GatewayXml.ParseResponse(doc) : (null, null);
+        var gw = gwResp.IsSuccessStatusCode ? GatewayXml.ParseResponse(doc, approvedCodes, declinedCodes) : (null, null, null);
+        if (SafeXml.Unwrap(doc)?.Root?.Name.LocalName is { } innerRoot) formato = innerRoot;
+        gatewayRef = gw.GatewayRef;
         (result, code) = gw.Status switch
         {
             "approved" => ("Autorizada", gw.Code),
             "declined" => ("Recusada", gw.Code),
-            _ => ("Indeterminada", null), // formato desconhecido ou erro HTTP: não afirma resultado (estrutura mascarada no log)
+            // código sem mapeamento, formato desconhecido ou erro HTTP: não afirma resultado (resposta mascarada no log)
+            _ => ("Indeterminada", gw.Code),
         };
     }
     catch (Exception ex) when (ex is OperationCanceledException or HttpRequestException)
@@ -155,7 +161,7 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
         pan = null; // 12: descarta PAN. Limitação: string .NET imutável, a memória só é liberada pelo GC.
     }
     Chk3Trace.Step(ctx, "11-12", txId, gwStatus is null ? $"{result}_timeout_12b_{destino}"
-        : code is not null ? $"{result}_codigo_{code}_{destino}" : $"{result}_{destino}_http{gwStatus}_{formato}", gwStatus, Chk3Trace.Since(t11), attempt.LocalRef);
+        : code is not null ? $"{result}_codigo_{code}_{destino}{(gatewayRef is null ? "" : "_ref_" + gatewayRef)}" : $"{result}_{destino}_http{gwStatus}_{formato}", gwStatus, Chk3Trace.Since(t11), attempt.LocalRef);
     var t13 = System.Diagnostics.Stopwatch.GetTimestamp();
 
     // ---- Passo 13: resultado na Integration, sem PAN ----

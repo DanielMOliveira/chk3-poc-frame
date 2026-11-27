@@ -60,4 +60,20 @@ public class GatewayXmlTests
         var x = XElement.Parse(GatewayXml.Build(Merchant with { Environment = null }, new GatewayOrder("P1", 1000, "BRL", 1, null, null, null), CardData));
         Assert.Equal(["merchantId", "merchantKey"], x.Element("verification")!.Elements().Select(e => e.Name.LocalName));
     }
+
+    // Formato observado no Gateway real (27/11): XML de negócio serializado dentro de <string> (ASP.NET Web API).
+    static XDocument Real(string code, string gwTx) => XDocument.Parse(
+        "<string xmlns=\"http://schemas.microsoft.com/2003/10/Serialization/\">" + System.Security.SecurityElement.Escape(
+            $"<?xml version=\"1.0\" encoding=\"utf-8\"?><transaction-response id=\"1\" versao=\"1.0\"><transactionId>{gwTx}</transactionId>" +
+            $"<status><code>{code}</code><message>MSG - {code}</message></status></transaction-response>") + "</string>");
+
+    [Fact]
+    public void Resposta_real_embrulhada_le_codigo_e_referencia_e_mapeia_pelo_env()
+    {
+        Assert.Equal((null, "409", null), GatewayXml.ParseResponse(Real("409", "")));                 // sem mapeamento: indeterminado
+        Assert.Equal(("approved", "0", "ABC123"), GatewayXml.ParseResponse(Real("0", "ABC123"), ["0"], ["409"]));
+        Assert.Equal(("declined", "409", null), GatewayXml.ParseResponse(Real("409", ""), ["0"], ["409"]));
+        Assert.Equal(("approved", "00", null), GatewayXml.ParseResponse(XDocument.Parse("<transaction-response><status>approved</status><code>00</code></transaction-response>")));
+        Assert.Equal((null, null, null), GatewayXml.ParseResponse(XDocument.Parse("<Error><Message>x</Message></Error>")));
+    }
 }

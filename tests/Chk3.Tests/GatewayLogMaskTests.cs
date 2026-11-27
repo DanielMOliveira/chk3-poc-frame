@@ -55,4 +55,16 @@ public class GatewayLogMaskTests
         Assert.DoesNotContain("5453010000066167", GatewayLogMask.Mask("Not Found 5453010000066167"));
         Assert.Equal("", GatewayLogMask.Mask(""));
     }
+
+    [Fact]
+    public void Resposta_embrulhada_em_string_e_desembrulhada_e_mascarada()
+    {
+        var inner = "<?xml version=\"1.0\" encoding=\"utf-8\"?><transaction-response id=\"1\"><transactionId>T1</transactionId><status><code>409</code><message>ERROR - 409</message></status><card><number>5453010000066167</number></card></transaction-response>";
+        var body = "<string xmlns=\"http://schemas.microsoft.com/2003/10/Serialization/\">" + System.Security.SecurityElement.Escape(inner) + "</string>";
+        var m = GatewayLogMask.Mask(body);
+        Assert.StartsWith("string:<transaction-response", m);
+        Assert.Contains("<code>409</code>", m);
+        Assert.Contains("545301******6167", m);
+        Assert.DoesNotContain("5453010000066167", m);
+    }
 }

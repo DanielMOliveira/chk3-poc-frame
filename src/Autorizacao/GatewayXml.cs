@@ -1,4 +1,5 @@
 using System.Xml.Linq;
+using Chk3.Shared;
 
 namespace Chk3.Autorizacao;
 
@@ -73,11 +74,30 @@ public static class GatewayXml
         return el;
     }
 
-    /// <summary>Resposta do mock (formato inventado no POC): status approved|declined e code.</summary>
-    public static (string? Status, string? Code) ParseResponse(XDocument? d)
+    /// <summary>
+    /// Lê a resposta. Dois formatos:
+    /// - mock (inventado no POC): &lt;transaction-response&gt;&lt;status&gt;approved|declined&lt;/status&gt;&lt;code/&gt;;
+    /// - Gateway real (observado em 27/11, já desembrulhado de &lt;string&gt;): &lt;transaction-response id versao&gt;&lt;transactionId/&gt;
+    ///   &lt;status&gt;&lt;code/&gt;&lt;message/&gt;&lt;/status&gt;... O significado dos códigos NÃO foi informado: aprovado/recusado só pelas
+    ///   listas do .env (GATEWAY_APPROVED_CODES / GATEWAY_DECLINED_CODES); fora delas, Indeterminada.
+    /// Status = approved | declined | null (indeterminado). Code = código de retorno. GatewayRef = transactionId do Gateway.
+    /// </summary>
+    public static (string? Status, string? Code, string? GatewayRef) ParseResponse(XDocument? d,
+        IReadOnlyCollection<string>? approvedCodes = null, IReadOnlyCollection<string>? declinedCodes = null)
     {
-        var r = d?.Root;
-        if (r?.Name.LocalName != "transaction-response") return (null, null);
-        return (r.Element("status")?.Value, r.Element("code")?.Value);
+        var r = SafeXml.Unwrap(d)?.Root;
+        if (r?.Name.LocalName != "transaction-response") return (null, null, null);
+        var st = r.Element("status");
+        if (st is null) return (null, null, null);
+        if (!st.HasElements) return (st.Value is "approved" or "declined" ? st.Value : null, r.Element("code")?.Value, null); // mock
+        var code = Clean(st.Element("code")?.Value);
+        var gwRef = Clean(r.Element("transactionId")?.Value);
+        var status = code is null ? null
+            : approvedCodes?.Contains(code) == true ? "approved"
+            : declinedCodes?.Contains(code) == true ? "declined" : null;
+        return (status, code, gwRef);
     }
+
+    // Código/ref só com [A-Za-z0-9_-] (vai para log e para a Integration).
+    static string? Clean(string? v) => v?.Trim() is { Length: > 0 and <= 32 } t && t.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_') ? t : null;
 }

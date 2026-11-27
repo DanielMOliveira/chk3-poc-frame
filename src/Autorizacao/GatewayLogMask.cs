@@ -52,7 +52,10 @@ public static partial class GatewayLogMask
     {
         if (string.IsNullOrEmpty(body)) return "";
         string masked;
-        if (SafeXml.TryParse(body) is { Root: { } root })
+        var parsed = SafeXml.TryParse(body);
+        var inner = SafeXml.Unwrap(parsed);
+        if (inner != parsed && inner?.Root is not null) return Mask(inner.Root.ToString(SaveOptions.DisableFormatting), secrets) is var m && m.Length > 0 ? "string:" + m : m;
+        if (parsed is { Root: { } root })
         {
             foreach (var el in root.DescendantsAndSelf().Where(e => !e.HasElements)) el.Value = MaskValue(el.Name.LocalName, el.Value);
             foreach (var a in root.DescendantsAndSelf().SelectMany(e => e.Attributes())) a.Value = MaskValue(a.Name.LocalName, a.Value);

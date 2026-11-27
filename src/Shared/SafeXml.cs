@@ -22,6 +22,15 @@ public static class SafeXml
         catch (XmlException) { return null; }
     }
 
+    /// <summary>
+    /// O Gateway real (ASP.NET Web API) devolve o XML de negócio serializado como string:
+    /// &lt;string xmlns="http://schemas.microsoft.com/2003/10/Serialization/"&gt;&amp;lt;?xml ...&amp;gt;&amp;lt;transaction-response ...&lt;/string&gt;.
+    /// Aqui desembrulha (uma vez) e devolve o XML interno; senão, o próprio documento.
+    /// </summary>
+    public static XDocument? Unwrap(XDocument? doc) =>
+        doc?.Root is { Name.LocalName: "string" } r && r.Name.NamespaceName == "http://schemas.microsoft.com/2003/10/Serialization/"
+            && r.Value.TrimStart().StartsWith('<') ? TryParse(r.Value.Trim()) ?? doc : doc;
+
     public static XDocument? TryParse(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
