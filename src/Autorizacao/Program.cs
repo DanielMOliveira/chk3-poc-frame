@@ -84,10 +84,16 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     // CVV: 3 dígitos (Amex 4). Cartões de teste do Gateway: 2 a 4 (o Visa e.Rede do HUB foi informado com CVV 11).
     bool cvvOk = req.Cvv is { Length: >= 2 and <= 4 } cv && cv.All(char.IsAsciiDigit)
                  && (cv.Length == 3 || (cv.Length == 4 && brand == "amex") || gatewayTestPans.Contains(pan));
-    if (brand is null || !expOk || !cvvOk) { pan = null; return Invalid("cartao_invalido"); }        // 9a
-    if (!snap.Brands.Contains(brand)) { pan = null; return Invalid("bandeira_nao_aceita"); }        // 9a
+    // 9a com motivo (para diagnóstico e mensagem da tela). Nunca PAN/CVV/validade: só o motivo, a bandeira e o tamanho.
+    var lenPan = pan?.Length ?? 0;
+    if (brand is null || !expOk || !cvvOk)
+    {
+        var motivo = pan is null || !pan.All(char.IsAsciiDigit) || !Card.Luhn(pan) ? "luhn" : brand is null ? "bandeira_desconhecida" : !expOk ? "validade" : "cvv";
+        pan = null; return Invalid("cartao_invalido", motivo, $"_len{lenPan}");
+    }
+    if (!snap.Brands.Contains(brand)) { pan = null; return Invalid("bandeira_nao_aceita", brand, $"_{brand}"); }        // 9a
     if (req.Installments < 1 || req.Installments > snap.MaxInstallments) { pan = null; return Invalid("parcelas_invalidas"); } // 1..máximo da sessão
-    if (testPansOnly && !testPans.Contains(pan)) { pan = null; return Invalid("pan_nao_permitido_no_poc"); }
+    if (testPansOnly && !testPans.Contains(pan)) { var bin = pan![..6]; pan = null; return Invalid("pan_nao_permitido_no_poc", null, $"_{brand}_bin{bin}_len{lenPan}"); } // BIN6 é público (não é PAN)
     if (req.HolderName is not { } holder || !holderRx.IsMatch(holder)) { pan = null; return Invalid("nome_invalido"); } // 9a: <cardHolder>
     Chk3Trace.Step(ctx, "9", txId, "validacao_ok", null, Chk3Trace.Since(t0));
     // deviceSessionId (passo 8) chega aqui, mas o modelo de XML do Gateway não tem campo para ele: não é enviado (pendência v7 §4).
@@ -224,10 +230,10 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
             passo, txId, attempt.LocalRef, destino, direcao, status, contentType, ms, statusGateway, statusDescricao, erro, erroDescricao, codigoAdquirente, resultado, detalhe, xmlMascarado);
 
     // 9a: código do erro e transactionId (se o snapshot já foi verificado). Nunca dado de cartão.
-    IResult Invalid(string code)
+    IResult Invalid(string code, string? motivo = null, string? diag = null)
     {
-        Chk3Trace.Step(ctx, "9", txId, "9a_" + code, 422, Chk3Trace.Since(t0));
-        return Results.Json(new { status = "ValidacaoFalhou", erro = code, transactionId = txId }, statusCode: 422);
+        Chk3Trace.Step(ctx, "9", txId, "9a_" + code + (motivo is null || code == "bandeira_nao_aceita" ? "" : "_" + motivo) + diag, 422, Chk3Trace.Since(t0));
+        return Results.Json(new { status = "ValidacaoFalhou", erro = code, motivo, transactionId = txId }, statusCode: 422);
     }
 });
 

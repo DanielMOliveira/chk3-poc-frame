@@ -74,7 +74,7 @@ app.MapPost("/digitacao", async (HttpContext ctx, IHttpClientFactory http) =>
         <form id="f" autocomplete="on" novalidate>
           <div class="fieldwrap field">
             <label for="pan">Número do cartão</label>
-            <input class="input card" id="pan" inputmode="numeric" autocomplete="cc-number" placeholder="0000 0000 0000 0000" maxlength="19" required>
+            <input class="input card" id="pan" inputmode="numeric" autocomplete="cc-number" placeholder="0000 0000 0000 0000" maxlength="23" required>
             <span class="cardbrand" id="brand"></span>
           </div>
           <div class="field">
@@ -84,7 +84,7 @@ app.MapPost("/digitacao", async (HttpContext ctx, IHttpClientFactory http) =>
           <div class="row2">
             <div class="field">
               <label for="exp">Validade</label>
-              <input class="input" id="exp" inputmode="numeric" autocomplete="cc-exp" placeholder="MM/AA" maxlength="5" required>
+              <input class="input" id="exp" inputmode="numeric" autocomplete="cc-exp" placeholder="MM/AA" maxlength="7" required>
             </div>
             <div class="field">
               <label for="cvv">CVV</label>

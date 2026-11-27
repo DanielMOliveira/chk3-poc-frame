@@ -21,24 +21,29 @@
   const luhn = (d) => { let s = 0, dbl = false; for (let i = d.length - 1; i >= 0; i--) { let n = +d[i]; if (dbl) { n *= 2; if (n > 9) n -= 9; } s += n; dbl = !dbl; } return d.length >= 12 && s % 10 === 0; };
   const digits = (v) => v.replace(/\D/g, '');
   function brandOf(v) {
+    if (/^(401178|401179|431274|438935|451416|457393|45763[12]|504175|5066|5067|509|627780|636297|636368|650|651652|655)/.test(v)) return 'ELO';
+    if (/^(606282|3841)/.test(v)) return 'HIPERCARD';
+    if (/^50/.test(v) && v.length > 16) return 'AURA';
+    if (/^3[47]/.test(v)) return 'AMEX';
+    if (/^(36|38|39|30[0-5])/.test(v)) return 'DINERS';
+    if (/^35(2[89]|[3-8])/.test(v)) return 'JCB';
+    if (/^(6011|64[4-9]|65)/.test(v)) return 'DISCOVER';
     if (/^4/.test(v)) return 'VISA';
     if (/^5[1-5]/.test(v) || /^2[2-7]/.test(v)) return 'MASTERCARD';
-    if (/^(4011|4312|5041|5067|6277|6362|6363|650)/.test(v)) return 'ELO';
-    if (/^3[47]/.test(v)) return 'AMEX';
     return '';
   }
   function check() {
     const pan = digits($('pan').value), exp = $('exp').value, cvv = $('cvv').value;
-    $('pay').disabled = sent || !(pan.length >= 13 && $('name').value.trim().length >= 3 && /^\d{2}\/\d{2}$/.test(exp) && /^\d{3,4}$/.test(cvv));
+    $('pay').disabled = sent || !(pan.length >= 13 && $('name').value.trim().length >= 3 && /^\d{2}\/(\d{2}|\d{4})$/.test(exp) && /^\d{3,4}$/.test(cvv));
   }
   $('pan').addEventListener('input', (e) => {
-    const v = digits(e.target.value).slice(0, 16);
+    const v = digits(e.target.value).slice(0, 19); // até 19 dígitos (Aura)
     e.target.value = v.replace(/(.{4})/g, '$1 ').trim();
     $('brand').textContent = brandOf(v);
     e.target.classList.remove('invalid'); check();
   });
   $('exp').addEventListener('input', (e) => {
-    let v = digits(e.target.value).slice(0, 4);
+    let v = digits(e.target.value).slice(0, 6); // MM/AA ou MM/AAAA
     if (v.length > 2) v = v.slice(0, 2) + '/' + v.slice(2);
     e.target.value = v; check();
   });
@@ -56,6 +61,8 @@
     const cvv = $('cvv').value;
     if (!luhn(pan)) { $('pan').classList.add('invalid'); return showError('Número do cartão inválido.'); }
     if (!(+mm >= 1 && +mm <= 12)) return showError('Validade inválida.');
+    const ano = yy.length === 4 ? +yy : 2000 + +yy;
+    if (new Date(ano, +mm, 1) <= new Date()) return showError('Validade vencida. Confira o mês e o ano (MM/AA ou MM/AAAA).');
     sent = true; check(); $('msg').hidden = true;
     post({ type: 'chk3.processing' });
     const ctrl = new AbortController();
@@ -66,7 +73,7 @@
       const r = await fetch('/api/authorize', {
         method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json', 'X-Typing-Credential': tc, ...(txId ? { 'X-Correlation-Id': txId } : {}) },
-        body: JSON.stringify({ pan, holderName: $('name').value.trim(), expMonth: +mm, expYear: 2000 + +yy, cvv, installments: +sel.value, snapshot, deviceSessionId }),
+        body: JSON.stringify({ pan, holderName: $('name').value.trim(), expMonth: +mm, expYear: yy.length === 4 ? +yy : 2000 + +yy, cvv, installments: +sel.value, snapshot, deviceSessionId }),
       });
       status = r.status;
       data = await r.json().catch(() => ({}));
@@ -76,7 +83,17 @@
     $('cvv').value = '';
     if (data.status === 'ValidacaoFalhou') { // 9a: pede correção, sem tentativa registrada
       sent = false; check();
-      showError('Cartão não aceito. Confira os dados ou use outro cartão.');
+      showError(({
+        validade: 'Validade vencida ou inválida (MM/AA ou MM/AAAA).',
+        cvv: 'Código de segurança inválido.',
+        luhn: 'Número do cartão inválido.',
+        bandeira_desconhecida: 'Bandeira do cartão não reconhecida.',
+      })[data.motivo] || ({
+        bandeira_nao_aceita: 'Bandeira não aceita nesta loja.',
+        pan_nao_permitido_no_poc: 'Cartão fora da lista de cartões de teste do POC.',
+        nome_invalido: 'Nome impresso inválido.',
+        parcelas_invalidas: 'Número de parcelas inválido.',
+      })[data.erro] || 'Cartão não aceito. Confira os dados ou use outro cartão.');
       return post({ type: 'chk3.validation' });
     }
     $('pan').value = ''; $('name').value = '';

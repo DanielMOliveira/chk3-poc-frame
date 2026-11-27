@@ -496,3 +496,10 @@ q "select event_type, attempts, last_status, last_error, delivered_at, next_atte
 - Status não esperado na autorização (5, 6, 9, 10, 16, 22, 23 ou fora da tabela) gera aviso
   "Gateway: status ... não esperado na autorização: Indeterminada".
 - Pedido fora de 1-50 alfanuméricos não é enviado: `Recusada_nao_enviado_pedido_invalido_903_<destino>`.
+
+## 27/11/2026 (noite): motivo do 9a
+
+- `9a_cartao_invalido_<luhn|bandeira_desconhecida|validade|cvv>_len<n>`, `9a_bandeira_nao_aceita_<bandeira>`,
+  `9a_pan_nao_permitido_no_poc_<bandeira>_bin<6 primeiros>_len<n>`. Nunca PAN completo, CVV ou validade.
+- A resposta 422 ganhou `motivo`; a tela mostra mensagem específica (validade vencida, CVV, fora da lista de teste...).
+- Tela: validade aceita MM/AA ou MM/AAAA (antes "12/2028" virava "12/20" = vencido) e número até 19 dígitos (Aura).
