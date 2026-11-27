@@ -46,7 +46,7 @@
       "title": "Como usar",
       "options": {
         "mode": "markdown",
-        "content": "Cole um **transactionId** (ou filtre por **pedido**) nas variáveis acima. A tabela *Linha do tempo* mostra cada passo do frame v7 (1 a 16) em ordem, com serviço, resultado, status HTTP e duração. Clique num transactionId de *Transações recentes* para abrir. Logs vêm do Loki (7 dias) e sobrevivem ao deploy. Nenhum dado de cartão, comprador ou credencial é registrado."
+        "content": "Cole um **transactionId** (ou filtre por **pedido**) nas variáveis acima. A tabela *Linha do tempo* mostra cada passo do frame v7 (1 a 16) em ordem, com serviço, resultado, status HTTP e duração. Clique num transactionId de *Transações recentes* para abrir. Logs vêm do Loki (7 dias) e sobrevivem ao deploy. Nenhum dado de cartão, comprador ou credencial é registrado. O painel *Gateway* mostra o XML de ida e volta do Gateway (mock ou real), sempre mascarado."
       },
       "gridPos": {
         "h": 7,
@@ -333,6 +333,40 @@
       "id": 4
     },
     {
+      "id": 10,
+      "type": "logs",
+      "title": "Gateway: ida (passo 11) e volta (passo 12) da transação $transactionId · XML mascarado",
+      "description": "Linhas chk3gw da API Autorização. cardNumber = BIN6+****+últimos 4; CVV, validade, portador, merchantKey e dados pessoais do billing = ***. destino = mock ou real.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-chk3"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-chk3"
+          },
+          "queryType": "range",
+          "expr": "{project=\"chk3-poc-frame\", service=\"autorizacao\", category=\"chk3.gateway\"} |= \"$transactionId\" | json passo=\"State.passo\", direcao=\"State.direcao\", destino=\"State.destino\", status=\"State.status\", ms=\"State.duracaoMs\", ct=\"State.contentType\", xml=\"State.xml\" | line_format \"passo {{.passo}} {{.direcao}} → {{.destino}}  http={{.status}} {{.ct}} {{.ms}}ms\\n{{.xml}}\""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Ascending",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false
+      }
+    },
+    {
       "type": "table",
       "title": "Transações recentes (passo 1-4 no canal) · filtro pedido: $orderId",
       "datasource": {
@@ -436,7 +470,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 42
       },
       "id": 5
     },
@@ -484,7 +518,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 42
       },
       "id": 6,
       "transformations": [
@@ -531,7 +565,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 40
+        "y": 51
       },
       "id": 7
     },
@@ -566,7 +600,7 @@
         "h": 5,
         "w": 12,
         "x": 12,
-        "y": 40
+        "y": 51
       },
       "id": 8
     },
@@ -598,7 +632,7 @@
         "h": 5,
         "w": 12,
         "x": 12,
-        "y": 45
+        "y": 56
       },
       "id": 9
     }
