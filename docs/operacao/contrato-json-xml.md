@@ -76,6 +76,7 @@ O `Idempotency-Key` cobre todos os campos: mesma chave com outro conteúdo dá 4
   <verification>
     <merchantId>GATEWAY_MERCHANT_ID</merchantId>
     <merchantKey>GATEWAY_MERCHANT_KEY (só no .env)</merchantKey>
+    <environment>GATEWAY_ENVIRONMENT (padrão 1; vazio = omitido)</environment>
   </verification>
   <authorize>
     <order><reference>orderId</reference><totalAmount>centavos</totalAmount></order>
@@ -153,3 +154,5 @@ chk3gw passo=12 servico=autorizacao transactionId=<tx> localRef=<lr> destino=rea
 ```
 
 Máscara (`src/Autorizacao/GatewayLogMask.cs`): `cardNumber` → BIN6 + `*` + últimos 4; `cardSecurityCode`, `cardExpirationDate`, `cardHolder`, `merchantId`, `merchantKey` e billing pessoal (`customerIdentity`, `name`, `address`, `address2`, `postalCode`, `phone`, `email`) → `***`; qualquer outro valor com 12+ dígitos → BIN6/últimos 4. Vale também para resposta XML/JSON de formato desconhecido (estrutura mantida). O `logs-check.sh` confere isso e procura a chave e o merchantId do `.env` em todos os logs.
+
+**27/11/2026, noite:** `<environment>` adicionado ao `<verification>`, logo depois da `<merchantKey>` (pedido do Daniel; `GATEWAY_ENVIRONMENT=1`, não é mascarado no log). O mock aceita o `<verification>` com ou sem `<environment>` (numérico).
