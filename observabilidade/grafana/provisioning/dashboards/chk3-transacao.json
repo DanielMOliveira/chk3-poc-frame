@@ -1,0 +1,606 @@
+{
+  "uid": "chk3-transacao",
+  "title": "CHK3 · Transação ponta a ponta",
+  "tags": [
+    "chk3",
+    "frame-v7"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "refresh": "10s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "transactionId",
+        "label": "transactionId",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": []
+      },
+      {
+        "name": "orderId",
+        "label": "Pedido (orderId)",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "Como usar",
+      "options": {
+        "mode": "markdown",
+        "content": "Cole um **transactionId** (ou filtre por **pedido**) nas variáveis acima. A tabela *Linha do tempo* mostra cada passo do frame v7 (1 a 16) em ordem, com serviço, resultado, status HTTP e duração. Clique num transactionId de *Transações recentes* para abrir. Logs vêm do Loki (7 dias) e sobrevivem ao deploy. Nenhum dado de cartão, comprador ou credencial é registrado."
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1
+    },
+    {
+      "type": "piechart",
+      "title": "Resultado final por status (passo 9-14, período)",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-chk3"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-chk3"
+          },
+          "expr": "sum by (resultado) (count_over_time({project=\"chk3-poc-frame\", service=\"cartao\"} |= \"chk3 passo=9-14 \" | json resultado=\"State.resultado\" [$__range]))",
+          "refId": "A",
+          "queryType": "instant",
+          "legendFormat": "{{resultado}}"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value"
+          ]
+        },
+        "reduceOptions": {
+          "values": true,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "limit": 30
+        },
+        "pieType": "donut"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "id": 2,
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "Webhooks ao canal (passo 16) por status HTTP",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-chk3"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-chk3"
+          },
+          "expr": "sum by (status) (count_over_time({project=\"chk3-poc-frame\", service=\"worker\"} |= \"chk3 passo=16 \" | json status=\"State.status\" [$__range]))",
+          "refId": "A",
+          "queryType": "instant",
+          "legendFormat": "HTTP {{status}}"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "reduceOptions": {
+          "values": true,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "limit": 30
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "id": 3,
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Linha do tempo da transação $transactionId (passos chk3, ordem cronológica)",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-chk3"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-chk3"
+          },
+          "expr": "{project=\"chk3-poc-frame\"} |= \"chk3 passo=\" |= \"transactionId=$transactionId\" | json passo=\"State.passo\", servico=\"State.servico\", resultado=\"State.resultado\", status=\"State.status\", duracaoMs=\"State.duracaoMs\", orderId=\"State.orderId\", localRef=\"State.localRef\", transactionId=\"State.transactionId\"",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "auto",
+            "replace": false,
+            "keepTime": false
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "labels": true,
+              "Line": true,
+              "tsNs": true,
+              "id": true,
+              "labelTypes": true,
+              "detected_level": true,
+              "service": true,
+              "project": true,
+              "level": true,
+              "category": true,
+              "stream": true,
+              "service_name": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "passo": 1,
+              "servico": 2,
+              "resultado": 3,
+              "status": 4,
+              "duracaoMs": 5,
+              "orderId": 6,
+              "localRef": 7,
+              "transactionId": 8
+            },
+            "renameByName": {
+              "Time": "Hora",
+              "duracaoMs": "duração (ms)"
+            },
+            "includeByName": {
+              "Time": true,
+              "passo": true,
+              "servico": true,
+              "resultado": true,
+              "status": true,
+              "duracaoMs": true,
+              "orderId": true,
+              "localRef": true,
+              "transactionId": true
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Hora",
+                "desc": false
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "transactionId"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Abrir esta transação",
+                    "url": "/d/chk3-transacao/chk3-transacao?var-transactionId=${__value.raw}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "resultado"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 330
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Hora"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "id": 4
+    },
+    {
+      "type": "table",
+      "title": "Transações recentes (passo 1-4 no canal) · filtro pedido: $orderId",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-chk3"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-chk3"
+          },
+          "expr": "{project=\"chk3-poc-frame\", service=\"canal\"} |= \"chk3 passo=1-4 \" |= \"$orderId\" | json transactionId=\"State.transactionId\", orderId=\"State.orderId\", resultado=\"State.resultado\"",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "auto",
+            "replace": false,
+            "keepTime": false
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "labels": true,
+              "Line": true,
+              "tsNs": true,
+              "id": true,
+              "labelTypes": true,
+              "detected_level": true,
+              "service": true,
+              "project": true,
+              "level": true,
+              "category": true,
+              "stream": true,
+              "service_name": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "transactionId": 1,
+              "orderId": 2,
+              "resultado": 3
+            },
+            "renameByName": {
+              "Time": "Hora"
+            },
+            "includeByName": {
+              "Time": true,
+              "transactionId": true,
+              "orderId": true,
+              "resultado": true
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Hora",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "transactionId"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Abrir esta transação",
+                    "url": "/d/chk3-transacao/chk3-transacao?var-transactionId=${__value.raw}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "id": 5
+    },
+    {
+      "type": "bargauge",
+      "title": "Latência por passo e serviço (p95 no período, ms)",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-chk3"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-chk3"
+          },
+          "expr": "quantile_over_time(0.95, {project=\"chk3-poc-frame\"} |= \"chk3 passo=\" | json passo=\"State.passo\", servico=\"State.servico\", duracaoMs=\"State.duracaoMs\" | passo != \"-\" | duracaoMs != \"\" | unwrap duracaoMs [$__range]) by (servico, passo)",
+          "refId": "A",
+          "queryType": "instant",
+          "legendFormat": "{{servico}} {{passo}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "reduceOptions": {
+          "values": true,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "limit": 30
+        }
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "id": 6,
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "logs",
+      "title": "Todos os logs com $transactionId (inclui avisos e erros)",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-chk3"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-chk3"
+          },
+          "expr": "{project=\"chk3-poc-frame\"} |= \"$transactionId\" | json mensagem=\"Message\", nivel=\"LogLevel\" | line_format \"{{.nivel}} {{.mensagem}}\"",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Ascending",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "id": 7
+    },
+    {
+      "type": "timeseries",
+      "title": "Erros e avisos por serviço",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-chk3"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-chk3"
+          },
+          "expr": "sum by (service, level) (count_over_time({project=\"chk3-poc-frame\", level=~\"Warning|Error|Critical\"} [$__interval]))",
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{service}} {{level}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60
+          }
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "id": 8
+    },
+    {
+      "type": "logs",
+      "title": "Erros e avisos (todos os serviços)",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-chk3"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-chk3"
+          },
+          "expr": "{project=\"chk3-poc-frame\", level=~\"Warning|Error|Critical\"} | json mensagem=\"Message\", categoria=\"Category\" | line_format \"[{{.service}}] {{.categoria}}: {{.mensagem}}\"",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "prettifyLogMessage": false
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 41
+      },
+      "id": 9
+    }
+  ]
+}

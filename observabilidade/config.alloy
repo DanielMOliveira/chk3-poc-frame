@@ -1,0 +1,53 @@
+// Alloy: coleta os logs dos containers DESTE projeto compose (label com.docker.compose.project) e envia ao Loki.
+// Acesso ao Docker só pelo docker-proxy (API só leitura: listar containers e ler logs).
+discovery.docker "chk3" {
+  host             = "tcp://docker-proxy:2375"
+  refresh_interval = "10s"
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=" + sys.env("CHK3_PROJECT")]
+  }
+}
+
+discovery.relabel "chk3" {
+  targets = []
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+  // Só os serviços da aplicação (o rastreio chk3). Postgres e a própria observabilidade ficam de fora.
+  rule {
+    source_labels = ["service"]
+    regex         = "canal|opcoes|cartao|integration|autorizacao|gateway-mock|worker"
+    action        = "keep"
+  }
+}
+
+loki.source.docker "chk3" {
+  host          = "tcp://docker-proxy:2375"
+  targets       = discovery.docker.chk3.targets
+  relabel_rules = discovery.relabel.chk3.rules
+  forward_to    = [loki.process.chk3.receiver]
+}
+
+// Linhas JSON do .NET: nível e categoria viram labels (baixa cardinalidade). transactionId fica no conteúdo
+// (filtro |= "<id>" ou | json no LogQL), não em label.
+loki.process "chk3" {
+  stage.json {
+    expressions = { level = "LogLevel", category = "Category" }
+  }
+  stage.labels {
+    values = { level = "", category = "" }
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

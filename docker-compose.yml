@@ -9,6 +9,9 @@ x-app: &app
   read_only: true
   tmpfs: [/tmp]
   security_opt: [no-new-privileges:true]
+  logging: &logging   # json-file com rotação. O Alloy lê os logs dos containers e guarda no Loki (sobrevivem ao deploy).
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
   environment: &env
     INTERNAL_API_KEY: ${INTERNAL_API_KEY:?defina no .env}
     SNAPSHOT_SIGNING_KEY: ${SNAPSHOT_SIGNING_KEY:?defina no .env}
@@ -74,6 +77,13 @@ services:
       GATEWAY_API_KEY: ${GATEWAY_API_KEY:?defina no .env}
       GATEWAY_TIMEOUT_MS: ${GATEWAY_TIMEOUT_MS:-3000}
       POC_TEST_PANS_ONLY: "true"
+      # <transaction-request> do passo 11 (só para o mock). merchantKey só no .env.
+      GATEWAY_MERCHANT_ID: ${GATEWAY_MERCHANT_ID:?defina no .env}
+      GATEWAY_MERCHANT_KEY: ${GATEWAY_MERCHANT_KEY:?defina no .env}
+      GATEWAY_ACQUIRER: ${GATEWAY_ACQUIRER:-1}
+      GATEWAY_SOFT_DESCRIPTOR: ${GATEWAY_SOFT_DESCRIPTOR:-CHK3POC}
+      GATEWAY_METHOD_PARCELADO: ${GATEWAY_METHOD_PARCELADO:-2}
+      GATEWAY_SAVE_CREDIT_CARD: ${GATEWAY_SAVE_CREDIT_CARD:-false}
     networks: [cde, vpn]
 
   gateway-mock:  # Gateway MCN simulado (passos 11-12). Só alcançável pela API Autorização.
@@ -82,6 +92,9 @@ services:
     environment:
       GATEWAY_API_KEY: ${GATEWAY_API_KEY:?defina no .env}
       GATEWAY_MOCK_TIMEOUT_DELAY_MS: ${GATEWAY_MOCK_TIMEOUT_DELAY_MS:-10000}
+      GATEWAY_MERCHANT_ID: ${GATEWAY_MERCHANT_ID:?defina no .env}
+      GATEWAY_MERCHANT_KEY: ${GATEWAY_MERCHANT_KEY:?defina no .env}
+      GATEWAY_METHOD_PARCELADO: ${GATEWAY_METHOD_PARCELADO:-2}
       Logging__LogLevel__Microsoft.AspNetCore: Warning
     networks: [vpn]
 
@@ -96,6 +109,74 @@ services:
     ports: ["${HOST_BIND:-127.0.0.1}:${CANAL_HOST_PORT:-8080}:8080"]
     networks: [fora]
     depends_on: [integration]
+
+  worker:        # Worker (passos 15-16 mínimos): webhook do outbox ao canal e expurgo do token do frame. Sem porta.
+    <<: *app
+    build: { context: ., args: { PROJECT: Worker } }
+    environment:
+      POSTGRES_CONNECTION: Host=postgres;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}
+      WEBHOOK_DEFAULT_URL: ${WEBHOOK_DEFAULT_URL:-}
+      WEBHOOK_SIGNING_SECRET: ${WEBHOOK_SIGNING_SECRET:?defina no .env}
+      PURGE_INTERVAL_SECONDS: ${PURGE_INTERVAL_SECONDS:-60}
+      PURGE_USED_GRACE_SECONDS: ${PURGE_USED_GRACE_SECONDS:-600}
+      Logging__LogLevel__Default: Information
+      Logging__LogLevel__Microsoft.AspNetCore: Warning
+    networks: [dados, saida]   # saida: única rede com internet além da "fora", só para o webhook
+    depends_on: [integration]
+
+  # ---------- Observabilidade: Grafana + Loki + Alloy (logs dos containers da aplicação) ----------
+  docker-proxy:  # Só leitura (GET) da API do Docker: containers (lista e logs) e redes. Sem POST/exec. Só o Alloy alcança.
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    restart: unless-stopped
+    environment: { CONTAINERS: 1, NETWORKS: 1, POST: 0, EVENTS: 0, INFO: 0, IMAGES: 0, VOLUMES: 0, EXEC: 0 }
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+    networks: [obs]
+    mem_limit: 64m
+    logging: *logging
+
+  loki:          # Guarda os logs (7 dias, volume lokidata): não se perdem quando o deploy recria os containers.
+    image: grafana/loki:3.6.5
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes: ["./observabilidade/loki.yaml:/etc/loki/loki.yaml:ro", "lokidata:/loki"]
+    networks: [obs]
+    mem_limit: 384m
+    environment: { GOMEMLIMIT: 320MiB }
+    logging: *logging
+
+  alloy:         # Coletor: lê os logs dos containers deste projeto (via docker-proxy) e envia ao Loki.
+    image: grafana/alloy:v1.22.0
+    restart: unless-stopped
+    command: ["run", "--storage.path=/var/lib/alloy/data", "--disable-reporting", "/etc/alloy/config.alloy"]
+    environment:
+      CHK3_PROJECT: ${COMPOSE_PROJECT_NAME:-chk3-poc-frame}
+      GOMEMLIMIT: 160MiB
+    volumes: ["./observabilidade/config.alloy:/etc/alloy/config.alloy:ro", "alloydata:/var/lib/alloy/data"]
+    networks: [obs]
+    mem_limit: 192m
+    depends_on: [loki, docker-proxy]
+    logging: *logging
+
+  grafana:       # Painel "CHK3 · Transação ponta a ponta" (provisionado do git). Só 127.0.0.1; acesso por túnel SSH.
+    image: grafana/grafana-oss:12.4.3
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?defina no .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/chk3-transacao.json
+    volumes: ["./observabilidade/grafana/provisioning:/etc/grafana/provisioning:ro", "grafanadata:/var/lib/grafana"]
+    ports: ["${HOST_BIND:-127.0.0.1}:${GRAFANA_HOST_PORT:-18184}:3000"]
+    networks: [obs, obs-pub]
+    mem_limit: 256m
+    depends_on: [loki]
+    logging: *logging
 
   tests:         # Testes xUnit dentro da rede do compose: só precisa de Docker. Uso: ./scripts/test.sh
     image: mcr.microsoft.com/dotnet/sdk:10.0
@@ -124,7 +205,13 @@ networks:
   cde: {}
   vpn: { internal: true }
   dados: { internal: true }
+  saida: {}                  # Worker -> internet (webhook)
+  obs: { internal: true }    # Loki, Alloy, docker-proxy, Grafana
+  obs-pub: {}                # só para publicar a porta do Grafana em 127.0.0.1
 
 volumes:
   pgdata: {}
   nuget: {}
+  lokidata: {}
+  alloydata: {}
+  grafanadata: {}
