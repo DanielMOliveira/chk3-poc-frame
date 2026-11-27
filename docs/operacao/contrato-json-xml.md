@@ -81,7 +81,7 @@ O `Idempotency-Key` cobre todos os campos: mesma chave com outro conteúdo dá 4
   <authorize>
     <order><reference>orderId</reference><totalAmount>centavos</totalAmount></order>
     <payment>
-      <acquirer>GATEWAY_ACQUIRER: 1=CIELO, 20=STONE, 22=GETNET</acquirer>
+      <acquirer>GATEWAY_ACQUIRER (inteiro positivo; modelo: 1=CIELO, 20=STONE, 22=GETNET; homologação: 27)</acquirer>
       <method>1 = crédito à vista; parcelado = GATEWAY_METHOD_PARCELADO (PENDENTE)</method>
       <amount>centavos</amount><currency>986</currency><country>BRA</country>
       <numberOfPayments>n</numberOfPayments><groupNumber>0</groupNumber>
@@ -168,3 +168,6 @@ Máscara (`src/Autorizacao/GatewayLogMask.cs`): `cardNumber` → BIN6 + `*` + ú
 
 - A API Autorização desembrulha o `<string>` (uma vez, com o parser seguro) e lê `transaction-response/status/code`, `status/message` e `transactionId` (referência do Gateway). O log mascarado mostra o XML interno com prefixo `string:`.
 - **O significado dos códigos não foi informado.** Aprovado/recusado só pelas listas `GATEWAY_APPROVED_CODES` / `GATEWAY_DECLINED_CODES` do `.env` (vazias por padrão); qualquer outro código fica **Indeterminada**, com o código no `resultado` (`Indeterminada_codigo_409_real`) e gravado como `gatewayCode`.
+
+**27/11/2026, 20h:** `GATEWAY_ACQUIRER` aceita qualquer inteiro positivo (antes só 1/20/22); na VPS é `27`, a pedido do Daniel (o 22 deu erro 1036 "Sem Adquirente Cadastrato ou Ativo"). Erro de negócio do Gateway: `result/error/code` entra no `resultado` (`Indeterminada_codigo_409_erro_1036_real`) e `details` (texto fixo do Gateway, até 120 caracteres, sem dígitos longos) vai no campo `detalhe` da linha `chk3gw` de volta.
+

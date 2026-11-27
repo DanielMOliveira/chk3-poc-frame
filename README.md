@@ -80,7 +80,7 @@ Parar:
 | `GATEWAY_URL` | gateway-mock | Endpoint completo do Gateway (na VPS: o real, só no `.env`). PANs de simulação do mock sempre vão ao mock |
 | `POC_GATEWAY_TEST_PANS` | `5453010000066167` | Cartões de teste do Gateway real (os únicos que vão para `GATEWAY_URL`) |
 | `GATEWAY_REAL_TIMEOUT_MS`, `GATEWAY_CONTENT_TYPE` | `15000`, `application/xml` | Timeout e Content-Type da chamada ao Gateway real |
-| `GATEWAY_ACQUIRER` | `1` | `<acquirer>`: 1=CIELO, 20=STONE, 22=GETNET (VPS: 22; pendente confirmar, merchant tem Rede e Adyen) |
+| `GATEWAY_ACQUIRER` | `1` | `<acquirer>`: inteiro positivo (modelo: 1=CIELO, 20=STONE, 22=GETNET). VPS: 27 (homologação) |
 | `GATEWAY_SOFT_DESCRIPTOR` | `CHK3POC` | `<softDescriptor>` padrão (a sessão pode mandar outro) |
 | `GATEWAY_METHOD_PARCELADO` | `2` | `<method>` do crédito parcelado. **PENDENTE**: valor provisório, não confirmado |
 | `GATEWAY_SAVE_CREDIT_CARD` | `false` | `<saveCreditCard>` |
