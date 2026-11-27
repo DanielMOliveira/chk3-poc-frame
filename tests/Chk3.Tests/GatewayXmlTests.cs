@@ -76,4 +76,14 @@ public class GatewayXmlTests
         Assert.Equal(("approved", "00", null), GatewayXml.ParseResponse(XDocument.Parse("<transaction-response><status>approved</status><code>00</code></transaction-response>")));
         Assert.Equal((null, null, null), GatewayXml.ParseResponse(XDocument.Parse("<Error><Message>x</Message></Error>")));
     }
+
+    [Fact]
+    public void Erro_do_gateway_real_le_codigo_e_details()
+    {
+        var inner = "<transaction-response id=\"1\"><transactionId /><status><code>409</code><message>ERROR - 409</message></status>" +
+            "<result><error><code>1036</code><action>409</action><details>Autenticação no gateway inválido 5453010000066167</details></error></result></transaction-response>";
+        var doc = XDocument.Parse("<string xmlns=\"http://schemas.microsoft.com/2003/10/Serialization/\">" + System.Security.SecurityElement.Escape(inner) + "</string>");
+        Assert.Equal(("1036", "Autenticação no gateway inválido ***"), GatewayXml.ParseError(doc));
+        Assert.Equal((null, null), GatewayXml.ParseError(XDocument.Parse("<transaction-response><status>approved</status></transaction-response>")));
+    }
 }

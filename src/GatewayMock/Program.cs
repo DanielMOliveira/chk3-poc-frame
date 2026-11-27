@@ -118,7 +118,7 @@ sealed record TransactionRequest(string Reference, int NumberOfPayments, string 
         string V(string n) => p.Element(n)!.Value;
         string? fail = null;
         void Check(bool ok, string campo) { if (!ok) fail ??= "payment/" + campo; }
-        Check(V("acquirer") is "1" or "20" or "22", "acquirer");
+        Check(V("acquirer") is { Length: >= 1 and <= 4 } acq && acq.All(char.IsAsciiDigit) && acq[0] != '0', "acquirer"); // inteiro positivo
         int.TryParse(V("numberOfPayments"), out var n);
         Check(n is >= 1 and <= 24, "numberOfPayments");
         Check(n == 1 ? V("method") == "1" : V("method") == methodInstallments, "method");

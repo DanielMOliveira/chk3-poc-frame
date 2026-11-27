@@ -27,10 +27,11 @@ var signer = new SnapshotSigner(Env.Secret("SNAPSHOT_SIGNING_KEY"));
 var merchant = new GatewayMerchant(
     MerchantId: Env.Required("GATEWAY_MERCHANT_ID"),
     MerchantKey: Env.Required("GATEWAY_MERCHANT_KEY"),
+    // Código do adquirente no Gateway: inteiro positivo (modelo: 1 = CIELO, 20 = STONE, 22 = GETNET; homologação: 27).
     Acquirer: Env.Optional("GATEWAY_ACQUIRER", "1") switch
     {
-        var a and ("1" or "20" or "22") => a, // 1 = CIELO, 20 = STONE, 22 = GETNET
-        _ => throw new InvalidOperationException("GATEWAY_ACQUIRER deve ser 1 (CIELO), 20 (STONE) ou 22 (GETNET)"),
+        var a when a.Length is >= 1 and <= 4 && a.All(char.IsAsciiDigit) && int.Parse(a) > 0 => a,
+        _ => throw new InvalidOperationException("GATEWAY_ACQUIRER deve ser um inteiro positivo (até 4 dígitos)"),
     },
     SoftDescriptor: Env.Optional("GATEWAY_SOFT_DESCRIPTOR", "CHK3POC"),
     MethodInstallments: Env.Optional("GATEWAY_METHOD_PARCELADO", "2"),
@@ -114,7 +115,7 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     Chk3Trace.Step(ctx, "10", txId, "10c_registrada", (int)attemptResp.StatusCode, Chk3Trace.Since(t10), attempt.LocalRef, attempt.OrderId);
 
     // ---- Passos 11 e 12: autorização no Gateway com valor do servidor. Timeout -> indeterminado, sem reenvio ----
-    string result; string? code = null; int? gwStatus = null; string formato = "-"; string? gatewayRef = null;
+    string result; string? code = null; int? gwStatus = null; string formato = "-"; string? gatewayRef = null; string? erroGateway = null; string? detalheGateway = null;
     var toMock = mockPans.Contains(pan) || gatewayUrl == mockUrl;
     var target = toMock ? mockUrl : gatewayUrl;
     var destino = toMock ? "mock" : "real";
@@ -137,11 +138,10 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
         var body = await ReadLimitedAsync(gwResp.Content, 64 * 1024, cts.Token);
         var doc = SafeXml.TryParse(body);
         formato = doc?.Root?.Name.LocalName ?? (string.IsNullOrWhiteSpace(body) ? "vazio" : "nao_xml");
-        GwLog("12", "volta", gwStatus, GatewayLogMask.Mask(body, merchant.MerchantKey, merchant.MerchantId), Chk3Trace.Since(t11),
-            gwResp.Content.Headers.ContentType?.MediaType);
         var gw = gwResp.IsSuccessStatusCode ? GatewayXml.ParseResponse(doc, approvedCodes, declinedCodes) : (null, null, null);
         if (SafeXml.Unwrap(doc)?.Root?.Name.LocalName is { } innerRoot) formato = innerRoot;
         gatewayRef = gw.GatewayRef;
+        (erroGateway, detalheGateway) = GatewayXml.ParseError(doc);
         (result, code) = gw.Status switch
         {
             "approved" => ("Autorizada", gw.Code),
@@ -149,6 +149,8 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
             // código sem mapeamento, formato desconhecido ou erro HTTP: não afirma resultado (resposta mascarada no log)
             _ => ("Indeterminada", gw.Code),
         };
+        GwLog("12", "volta", gwStatus, GatewayLogMask.Mask(body, merchant.MerchantKey, merchant.MerchantId), Chk3Trace.Since(t11),
+            gwResp.Content.Headers.ContentType?.MediaType, erroGateway, detalheGateway);
     }
     catch (Exception ex) when (ex is OperationCanceledException or HttpRequestException)
     {
@@ -161,7 +163,7 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
         pan = null; // 12: descarta PAN. Limitação: string .NET imutável, a memória só é liberada pelo GC.
     }
     Chk3Trace.Step(ctx, "11-12", txId, gwStatus is null ? $"{result}_timeout_12b_{destino}"
-        : code is not null ? $"{result}_codigo_{code}_{destino}{(gatewayRef is null ? "" : "_ref_" + gatewayRef)}" : $"{result}_{destino}_http{gwStatus}_{formato}", gwStatus, Chk3Trace.Since(t11), attempt.LocalRef);
+        : code is not null ? $"{result}_codigo_{code}{(erroGateway is null ? "" : "_erro_" + erroGateway)}_{destino}{(gatewayRef is null ? "" : "_ref_" + gatewayRef)}" : $"{result}_{destino}_http{gwStatus}_{formato}", gwStatus, Chk3Trace.Since(t11), attempt.LocalRef);
     var t13 = System.Diagnostics.Stopwatch.GetTimestamp();
 
     // ---- Passo 13: resultado na Integration, sem PAN ----
@@ -187,9 +189,9 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     return Results.Ok(new { status = result, transactionId = attempt.TransactionId });
 
     // Linha "chk3gw" para o Grafana: XML de ida/volta do Gateway, SEMPRE mascarado (GatewayLogMask).
-    void GwLog(string passo, string direcao, int? status, string xmlMascarado, long ms, string? contentType = null) =>
-        gwLog.LogInformation("chk3gw passo={passo} servico=autorizacao transactionId={transactionId} localRef={localRef} destino={destino} direcao={direcao} status={status} contentType={contentType} duracaoMs={duracaoMs} xml={xml}",
-            passo, txId, attempt.LocalRef, destino, direcao, status, contentType, ms, xmlMascarado);
+    void GwLog(string passo, string direcao, int? status, string xmlMascarado, long ms, string? contentType = null, string? erro = null, string? detalhe = null) =>
+        gwLog.LogInformation("chk3gw passo={passo} servico=autorizacao transactionId={transactionId} localRef={localRef} destino={destino} direcao={direcao} status={status} contentType={contentType} duracaoMs={duracaoMs} erroGateway={erroGateway} detalhe=\"{detalhe}\" xml={xml}",
+            passo, txId, attempt.LocalRef, destino, direcao, status, contentType, ms, erro, detalhe, xmlMascarado);
 
     // 9a: código do erro e transactionId (se o snapshot já foi verificado). Nunca dado de cartão.
     IResult Invalid(string code)

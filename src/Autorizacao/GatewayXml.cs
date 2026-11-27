@@ -98,6 +98,22 @@ public static class GatewayXml
         return (status, code, gwRef);
     }
 
+    /// <summary>Erro de negócio do Gateway real: result/error/code e details (texto fixo do Gateway, até 120 caracteres, sem dígitos longos).</summary>
+    public static (string? ErrorCode, string? Details) ParseError(XDocument? d)
+    {
+        var e = SafeXml.Unwrap(d)?.Root?.Element("result")?.Element("error");
+        if (e is null) return (null, null);
+        var det = e.Element("details")?.Value;
+        if (det is not null)
+        {
+            det = new string(det.Where(c => !char.IsControl(c)).ToArray()).Trim();
+            det = System.Text.RegularExpressions.Regex.Replace(det, "[0-9]{6,}", "***");
+            if (det.Length > 120) det = det[..120];
+            if (det.Length == 0) det = null;
+        }
+        return (Clean(e.Element("code")?.Value), det);
+    }
+
     // Código/ref só com [A-Za-z0-9_-] (vai para log e para a Integration).
     static string? Clean(string? v) => v?.Trim() is { Length: > 0 and <= 32 } t && t.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_') ? t : null;
 }
