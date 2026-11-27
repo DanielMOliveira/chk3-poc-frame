@@ -133,3 +133,23 @@ Migração `src/Integration/Migrations/0002_token_frame_parcelas_webhook.sql`, a
 - **Token:** `pc_` (pagamento) / `tc_` (digitação) + 32 bytes aleatórios (256 bits, CSPRNG) em base64url. Nunca é o `transactionId`. **Só o SHA-256 é gravado.**
 - **Tabela quente `frame_tokens`** (estreita): `hash`, `kind`, `transaction_id`, `created_at`, `expires_at`, `used_at` (uso único: marcada no passo 10), snapshot mínimo do canal (`brands`, `max_installments`).
 - **Expurgo pelo Worker:** a cada `PURGE_INTERVAL_SECONDS` (60), em lotes de `PURGE_BATCH_SIZE` (500), apaga tokens expirados ou usados há mais de `PURGE_USED_GRACE_SECONDS` (600; nesse intervalo uma 2ª tentativa ainda recebe 409 10b) e grava em `frame_token_history` só metadados: `transaction_id`, `kind`, datas, `motivo` (`expirado`/`usado`), `purged_at`. Sem token nem hash. Log: `passo=15 resultado=expurgo_token_frame_<n>_para_historico`.
+
+## 6. Gateway real (27/11/2026, tarde)
+
+- **Destino por `.env`:** `GATEWAY_URL` = endpoint completo. Vazio = `gateway-mock` (dev/CI). Na VPS aponta para o Gateway real do Daniel (a URL e as credenciais ficam **só no `.env`** da VPS/box; `.env.example` tem placeholder).
+- **Smoke/CI nunca vão ao Gateway real:** os PANs de simulação do mock (4111…, 4000…0002, 4000…0119, 5555…4444, 5105…) sempre vão para `GATEWAY_MOCK_URL`. Só os cartões de teste do Gateway (`POC_GATEWAY_TEST_PANS`, padrão `5453010000066167`, o do modelo) seguem para `GATEWAY_URL`.
+- `GATEWAY_REAL_TIMEOUT_MS` (15000) para o real; `GATEWAY_TIMEOUT_MS` (3000) para o mock. A Web App Cartão espera o maior + 5 s.
+- `GATEWAY_CONTENT_TYPE` (padrão `application/xml`, enviado com `charset=utf-8`). O header `X-Gateway-Key` (chave do mock) só vai para o mock.
+- `GATEWAY_ACQUIRER=22` na VPS, a pedido do Daniel. **Pendente:** no modelo 22 = GETNET, e o merchant de homologação tem Rede e Adyen; confirmar o código com o Gateway.
+- `fraud=false` (sem antifraude).
+- A API Autorização entrou na rede `saida` (egress) para alcançar o Gateway real. No v7 isso seria a VPN.
+- **Resposta:** só o formato do mock (`<transaction-response><status/><code/>`) é interpretado. Resposta de formato desconhecido, erro HTTP ou timeout → **Indeterminada** (nunca afirma aprovação/recusa), com o corpo mascarado no log. `resultado` do passo 11-12: `<Estado>_<mock|real>_http<status>_<raiz do XML|vazio|nao_xml>` ou `<Estado>_codigo_<code>_<destino>`. **Pendente:** reconciliação do indeterminado pelo Worker (consulta ao Gateway) não existe no POC.
+
+**Log mascarado da ida e da volta** (linhas `chk3gw`, categoria `chk3.gateway`, da API Autorização):
+
+```
+chk3gw passo=11 servico=autorizacao transactionId=<tx> localRef=<lr> destino=real direcao=ida status=(null) ... xml=<transaction-request>...<merchantId>***</merchantId><merchantKey>***</merchantKey>...<cardHolder>***</cardHolder><cardNumber>545301******6167</cardNumber><cardSecurityCode>***</cardSecurityCode><cardExpirationDate>***</cardExpirationDate>...
+chk3gw passo=12 servico=autorizacao transactionId=<tx> localRef=<lr> destino=real direcao=volta status=404 contentType=(null) duracaoMs=2406 xml=
+```
+
+Máscara (`src/Autorizacao/GatewayLogMask.cs`): `cardNumber` → BIN6 + `*` + últimos 4; `cardSecurityCode`, `cardExpirationDate`, `cardHolder`, `merchantId`, `merchantKey` e billing pessoal (`customerIdentity`, `name`, `address`, `address2`, `postalCode`, `phone`, `email`) → `***`; qualquer outro valor com 12+ dígitos → BIN6/últimos 4. Vale também para resposta XML/JSON de formato desconhecido (estrutura mantida). O `logs-check.sh` confere isso e procura a chave e o merchantId do `.env` em todos os logs.

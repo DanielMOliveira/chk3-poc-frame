@@ -480,3 +480,10 @@ q "select event_type, attempts, last_status, last_error, delivered_at, next_atte
 - faz um caso parcelado 3x (máximo 6) e confere `xml_ok_n<n>_m<método>_` no gateway-mock;
 - envia billing de teste e procura nos logs esses valores, tags XML (`<cardNumber>` etc.), a URL completa do webhook e os segredos novos (`GATEWAY_MERCHANT_KEY`, `WEBHOOK_SIGNING_SECRET`, `GRAFANA_ADMIN_PASSWORD`).
 
+### Gateway real e XML mascarado (27/11/2026, tarde)
+
+- A API Autorização agora escreve duas linhas `chk3gw` por autorização (categoria `chk3.gateway`): `passo=11 direcao=ida` (XML enviado) e `passo=12 direcao=volta` (status HTTP e corpo da resposta), **sempre mascarados** (ver `contrato-json-xml.md` §6). Elas têm `transactionId` e `localRef`, então o `grep "$TX"` também as acha.
+- O `resultado` do `autorizacao passo=11-12` ganhou o destino: `Autorizada_codigo_00_mock`, `Indeterminada_real_http404_vazio`, `Indeterminada_timeout_12b_real`.
+- Ver no terminal: `docker compose logs --no-color --no-log-prefix autorizacao | jq -R -r 'fromjson? | select(.Category=="chk3.gateway") | .Message'`.
+- O `logs-check.sh` confere que cada transação tem ida e volta e que nenhum campo sensível do XML sai sem máscara.
+

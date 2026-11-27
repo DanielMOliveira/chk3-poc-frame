@@ -41,6 +41,7 @@ Link direto: `http://localhost:18184/d/chk3-transacao/x?var-transactionId=<id>&f
 | Webhooks ao canal | entregas do passo 16 por status HTTP (200, 429, ...) |
 | **Linha do tempo da transação** | uma linha por passo `chk3` do transactionId, em ordem: hora, passo, serviço, resultado, status, duração (ms), orderId, localRef. Do 1-4 (canal) ao 16 (webhook) |
 | Transações recentes | passo 1-4 do canal; clique no transactionId para abrir a linha do tempo |
+| **Gateway: ida (11) e volta (12)** | XML enviado ao Gateway e resposta, **mascarados**, com destino (`mock`/`real`), status HTTP, Content-Type e duração |
 | Latência por passo e serviço | p95 de `duracaoMs` no período |
 | Todos os logs com o transactionId | inclusive avisos (ex.: timeout do Gateway) |
 | Erros e avisos | série por serviço e lista (todos os serviços) |
@@ -60,3 +61,15 @@ Limites no compose: loki 384 MB (`GOMEMLIMIT` 320 MiB), alloy 256 MB (200 MiB), 
 Medido na VPS após o deploy (27/11): loki ~75-145 MB, alloy ~70-186 MB (pico na leitura inicial dos logs), grafana ~90-180 MB, proxy ~34 MB. A VPS tem 15,6 GB e ficou com ~3,4 GB disponíveis.
 
 Para desligar só a observabilidade: `docker compose stop grafana alloy loki docker-proxy` (o app continua).
+
+## Mensagens do Gateway (desde 27/11, tarde)
+
+Painel **"Gateway: ida (passo 11) e volta (passo 12)"**, logo abaixo da linha do tempo. Em Explore:
+
+```
+{project="chk3-poc-frame", service="autorizacao", category="chk3.gateway"} |= "<transactionId>"
+  | json passo="State.passo", direcao="State.direcao", destino="State.destino", status="State.status", xml="State.xml"
+  | line_format "passo {{.passo}} {{.direcao}} → {{.destino}} http={{.status}}\n{{.xml}}"
+```
+
+Só as chamadas ao Gateway real: acrescente `| destino="real"`. Screenshot: `poc-frame-docs/grafana-gateway-real-vps-2026-11-27.png`.
