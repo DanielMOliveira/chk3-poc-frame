@@ -150,10 +150,10 @@ services:
     command: ["run", "--storage.path=/var/lib/alloy/data", "--disable-reporting", "/etc/alloy/config.alloy"]
     environment:
       CHK3_PROJECT: ${COMPOSE_PROJECT_NAME:-chk3-poc-frame}
-      GOMEMLIMIT: 160MiB
+      GOMEMLIMIT: 200MiB
     volumes: ["./observabilidade/config.alloy:/etc/alloy/config.alloy:ro", "alloydata:/var/lib/alloy/data"]
     networks: [obs]
-    mem_limit: 192m
+    mem_limit: 256m
     depends_on: [loki, docker-proxy]
     logging: *logging
 

@@ -10,7 +10,9 @@ POC executável do **Frame V0 v7** do MCN Checkout 3.0, passos **1 a 14** de
 Ele vale como modelo do frame daqui em diante. Ver a seção "Modelo visual" para o que foi aplicado e os desvios.
 
 Stack: .NET 10 (ASP.NET Core minimal APIs), Postgres 17, Npgsql + Dapper, docker compose.
-Sem Front Door, APIM, Identity Server, Firewall, VPN e Worker.
+Sem Front Door, APIM, Identity Server, Firewall e VPN. Desde 27/11 há um **Worker** (webhook assinado e expurgo do token do frame) e **Grafana + Loki + Alloy** para seguir uma transação do início ao fim.
+
+Contratos (JSON do `POST /sessions`, XML do Gateway, webhook, `frame_tokens`): [`docs/operacao/contrato-json-xml.md`](docs/operacao/contrato-json-xml.md). Grafana: [`docs/operacao/grafana.md`](docs/operacao/grafana.md).
 
 ## Pré-requisitos
 - **Docker** com **compose v2** (`docker compose version`).
@@ -29,7 +31,7 @@ git clone https://github.com/DanielMOliveira/chk3-poc-frame.git
 cd chk3-poc-frame
 ./scripts/init-env.sh             # cria o .env com segredos aleatórios (nunca é commitado)
 docker compose up -d --build
-./scripts/smoke.sh                # smoke ponta a ponta: aprova, recusa e timeout
+./scripts/smoke.sh                # smoke ponta a ponta: aprova, recusa, timeout e parcelado 3x com resto
 ./scripts/test.sh                 # testes xUnit num container do SDK, dentro da rede do compose
 ```
 
@@ -74,6 +76,16 @@ Parar:
 | `INTERNAL_API_KEY` | gerado | Chave dos endpoints internos (no lugar da Managed Identity) |
 | `SNAPSHOT_SIGNING_KEY` | gerado | HMAC do snapshot de bandeiras (mínimo 32 bytes) |
 | `GATEWAY_API_KEY` | gerado | Chave do mock do Gateway |
+| `GATEWAY_MERCHANT_ID` / `GATEWAY_MERCHANT_KEY` | `00000000` / gerado | `<verification>` do XML do Gateway. **O valor real fica só no `.env`**, nunca no repo nem no log |
+| `GATEWAY_ACQUIRER` | `1` | `<acquirer>`: 1=CIELO, 20=STONE, 22=GETNET |
+| `GATEWAY_SOFT_DESCRIPTOR` | `CHK3POC` | `<softDescriptor>` padrão (a sessão pode mandar outro) |
+| `GATEWAY_METHOD_PARCELADO` | `2` | `<method>` do crédito parcelado. **PENDENTE**: valor provisório, não confirmado |
+| `GATEWAY_SAVE_CREDIT_CARD` | `false` | `<saveCreditCard>` |
+| `WEBHOOK_DEFAULT_URL` | vazio | URL https padrão do webhook (o `channels.webhook_url` tem precedência). Vazio = não envia |
+| `WEBHOOK_SIGNING_SECRET` | gerado | HMAC-SHA256 do header `X-Chk3-Signature` |
+| `PURGE_INTERVAL_SECONDS`, `PURGE_USED_GRACE_SECONDS` | `60`, `600` | Expurgo do `frame_tokens` pelo Worker |
+| `GRAFANA_HOST_PORT` | `18184` | Porta do Grafana (sempre em `HOST_BIND`, 127.0.0.1) |
+| `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` | `admin` / gerado | Login do Grafana |
 | `HOST_BIND` | `127.0.0.1` | Interface das portas publicadas. `127.0.0.1` = só a máquina. `0.0.0.0` = todas as interfaces (rede local, sem TLS: evitar) |
 | `CANAL_HOST_PORT` | `8080` | Porta do canal fake no host |
 | `OPCOES_HOST_PORT` | `8081` | Porta da Tela de opções no host |
@@ -151,7 +163,9 @@ CARTAO_PUBLIC_ORIGIN=https://pay.seu-dominio
 | `autorizacao` | API Autorização (CDE, sem banco) | — | cde, vpn | 9 a 13 |
 | `integration` | Integration API | `INTEGRATION_HOST_PORT` (8083, só `/sessions`) | fora, cde, dados | 2, 3, 4, 6, 7, 8, 10, 13 |
 | `gateway-mock` | Gateway MCN | — | vpn (internal) | 11, 12 |
-| `postgres` | SQL | — | dados (internal) | 3, 6, 7, 10, 13 |
+| `postgres` | SQL | — | dados (internal) | 3, 6, 7, 10, 13, 15, 16 |
+| `worker` | Worker (outbox e expurgo) | — | dados, saida | 15 (expurgo do token), 16 (webhook ao canal) |
+| `loki`, `alloy`, `docker-proxy`, `grafana` | Observabilidade (fora do v7) | `GRAFANA_HOST_PORT` (18184, só Grafana) | obs (internal), obs-pub | logs de todos os passos |
 
 Fluxo:
 
@@ -283,7 +297,9 @@ Rastreio e logs: `./scripts/logs-check.sh`. Também roda no `deploy.sh`, depois 
 - Contrato real do Gateway MCN.
 
 ## Pontos em aberto (TODO, ver v7 §4)
-- **Contrato do Gateway**: campos, códigos de recusa, timeout, campo do `deviceSessionId` e dado de cartão na resposta 12. O contrato do mock (`/poc/v1/authorize`) é **inventado**.
+- **Contrato do Gateway**: códigos de recusa, timeout, campo do `deviceSessionId` e dado de cartão na resposta 12.
+  - Desde 27/11 a **requisição** segue o `<transaction-request>` XML informado (ver `docs/operacao/contrato-json-xml.md`). A **resposta** do mock continua inventada.
+  - **Pendente:** `<method>` do crédito parcelado (POC usa `2`, provisório), `<flag>` pela tabela de BIN real (POC: visa/mastercard pelo prefixo), `saveCreditCard` (POC: `false`).
 - **Credencial**: nome do header (POC: `X-Payment-Credential` / `X-Typing-Credential`), formato e tamanho (POC: prefixo + 32 bytes base64url) e TTL da credencial de digitação (POC: igual ao da sessão).
 - **Credenciais anteriores no 3b**: revogar ou manter. O POC mantém válidas até o TTL.
 - **Antifraude**: provedor e obrigatoriedade por canal.

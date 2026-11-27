@@ -7,6 +7,8 @@ Os comandos e os exemplos foram executados na VPS, no diretório do app, em 25/1
   - três feitas no navegador (E2E pelo túnel SSH): aprovada, recusada e indeterminada;
   - três do `scripts/logs-check.sh`.
 
+> **Atualização 27/11/2026:** novo serviço `worker` (passos 15 e 16), XML do Gateway no passo 11, tabela `credentials` renomeada para `frame_tokens` e logs guardados no Loki/Grafana. Ver a seção "Atualização 27/11/2026" no fim. O texto abaixo foi mantido como estava em 25/11.
+
 O `Timestamp` dos logs e os horários do Postgres estão em UTC. Em novembro, Lisboa também está em UTC+0.
 
 ```bash
@@ -431,3 +433,50 @@ O teste roda no `scripts/deploy.sh`, depois do smoke. Também dá para rodar à 
   - o .NET acrescenta `RequestPath` (path bruto) e `TraceId`;
   - nos fluxos do POC, o path não tem dado sensível (o máximo é o `localRef` no passo 13), e query string é recusada antes;
   - a linha `chk3` usa só o padrão da rota.
+
+## Atualização 27/11/2026: worker, XML do Gateway, token do frame e Loki
+
+Commits `13560fc`..`0ad9381`. Exemplos da VPS, 27/11/2026 (UTC = Lisboa).
+
+**Novo container `worker`** (`chk3-poc-frame-worker-1`, redes `dados` e `saida`, sem porta publicada):
+
+| passo | resultado | quando |
+|---|---|---|
+| `16` | `webhook_entregue_<host>_http<status>_tentativa<n>` / `webhook_falhou_<host>_http<status>_tentativa<n>` / `webhook_sem_url_https` | cada envio do outbox ao canal. A URL completa não vai para o log, só o host |
+| `15` | `expurgo_token_frame_<n>_para_historico` | lote de tokens expirados/usados movidos para `frame_token_history` (sem transactionId na linha) |
+
+O `transactionId` e o `orderId` do evento ficam na linha do passo 16, então o `grep "$TX"` agora acha também o webhook:
+
+```
+2026-11-27T00:38:17.168Z chk3 passo=16 servico=worker transactionId=01a21a70-4140-7e73-a610-04b8452aa661 localRef=(null) orderId=SMOKE-aprova resultado=webhook_entregue_webhook.site_http200_tentativa1 status=200 duracaoMs=717
+2026-11-27T00:38:12.426Z chk3 passo=15 servico=worker transactionId=(null) ... resultado=expurgo_token_frame_125_para_historico
+```
+
+**gateway-mock, passo 11-12:** o mock agora recebe o `<transaction-request>` XML (ver `contrato-json-xml.md`). O `resultado` diz se o XML passou na validação, com parcelas e método:
+- `xml_ok_n1_m1_approved_00`, `xml_ok_n3_m2_approved_00` (3x, método parcelado provisório 2), `xml_ok_n1_m1_declined_05`, `xml_ok_n1_m1_timeout_simulado_cliente_desistiu`;
+- `xml_invalido_<campo>` (ex.: `xml_invalido_authorize.payment.numberOfPayments`), com status 400; merchant errado dá 401.
+- O `orderId` da linha é o `<reference>` do XML. O XML bruto, PAN, CVV, validade, nome e a merchantKey nunca são registrados.
+
+**autorizacao:** novo `9a_nome_invalido` (nome do portador). As parcelas acima do máximo da sessão continuam como `9a_parcelas_invalidas` (422).
+
+**integration:** novos códigos do `POST /sessions`: `2_valor_invalido` (sem `amount`), `2a_billing_<campo>_invalido`, `2a_url_return_invalida`, `2a_soft_descriptor_invalido`. O valor recusado nunca vai para o log.
+
+**Postgres** (migração `0002_token_frame_parcelas_webhook.sql`, aplicada no volume existente, nada apagado):
+- `credentials` → **`frame_tokens`** (+ `brands`, `max_installments`, `used_at`). Continua sem selecionar `hash`.
+- **`frame_token_history`**: metadados dos tokens expurgados (sem token/hash).
+- `payment_sessions` + `billing` (jsonb), `url_return`, `soft_descriptor`; `channels` + `webhook_url`; `outbox` + `event_id`, `attempts`, `next_attempt_at`, `last_status`, `last_error`.
+
+```bash
+q() { docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$0"' "$1"; }
+q "select kind, transaction_id, created_at, expires_at, used_at from frame_tokens order by created_at desc limit 10"
+q "select motivo, count(*) from frame_token_history group by motivo"
+q "select event_type, attempts, last_status, last_error, delivered_at, next_attempt_at from outbox order by created_at desc limit 10"
+```
+
+**Retenção (substitui o item "Retenção" acima):** os logs também vão para o **Loki** (7 dias) e sobrevivem ao deploy. O Docker passou a rotacionar (`json-file` 10 MB × 3). Para ver no navegador, ver [`grafana.md`](grafana.md). O `docker compose logs | grep` continua valendo para o que ainda está no container.
+
+**`scripts/logs-check.sh`** agora também:
+- inclui o `worker` e espera até 45 s pelo passo 16 de cada transação;
+- faz um caso parcelado 3x (máximo 6) e confere `xml_ok_n<n>_m<método>_` no gateway-mock;
+- envia billing de teste e procura nos logs esses valores, tags XML (`<cardNumber>` etc.), a URL completa do webhook e os segredos novos (`GATEWAY_MERCHANT_KEY`, `WEBHOOK_SIGNING_SECRET`, `GRAFANA_ADMIN_PASSWORD`).
+
