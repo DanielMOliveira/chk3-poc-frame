@@ -4,7 +4,7 @@ namespace Chk3.Autorizacao;
 
 /// <summary>Configuração do merchant no Gateway (só do .env; a merchantKey nunca vai para código, log ou commit).</summary>
 public sealed record GatewayMerchant(string MerchantId, string MerchantKey, string Acquirer, string SoftDescriptor,
-    string MethodInstallments, bool SaveCreditCard);
+    string MethodInstallments, bool SaveCreditCard, string? Environment = null);
 
 /// <summary>Dados do passo 10c (Integration, sem PAN) e do passo 9 (navegador, com PAN) para o passo 11.</summary>
 public sealed record GatewayOrder(string OrderId, long AmountCents, string Currency, int Installments,
@@ -29,7 +29,9 @@ public static class GatewayXml
             new XElement("version", "1.0.0"),
             new XElement("verification",
                 new XElement("merchantId", m.MerchantId),
-                new XElement("merchantKey", m.MerchantKey)),
+                new XElement("merchantKey", m.MerchantKey),
+                // <environment> logo depois da merchantKey (pedido do Daniel, 27/11). GATEWAY_ENVIRONMENT vazio = omitido.
+                string.IsNullOrEmpty(m.Environment) ? null : new XElement("environment", m.Environment)),
             new XElement("authorize",
                 new XElement("order",
                     new XElement("reference", o.OrderId),

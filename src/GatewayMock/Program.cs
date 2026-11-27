@@ -99,7 +99,10 @@ sealed record TransactionRequest(string Reference, int NumberOfPayments, string 
         if (Names(root) != "version,verification,authorize") return ("transaction-request_ordem", null);
         if (root.Element("version")!.Value != "1.0.0") return ("version", null);
         var ver = root.Element("verification")!;
-        if (Names(ver) != "merchantId,merchantKey" || ver.Element("merchantId")!.Value != merchantId
+        // <environment> (opcional, depois da merchantKey): numérico.
+        if (Names(ver) is not ("merchantId,merchantKey" or "merchantId,merchantKey,environment")
+            || ver.Element("environment") is { } env && !(env.Value.Length is >= 1 and <= 4 && env.Value.All(char.IsAsciiDigit))
+            || ver.Element("merchantId")!.Value != merchantId
             || !Web.FixedTimeEquals(ver.Element("merchantKey")!.Value, merchantKey)) return ("verification", null);
 
         var auth = root.Element("authorize")!;

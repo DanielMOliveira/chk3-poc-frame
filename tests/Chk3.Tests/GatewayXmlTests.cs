@@ -9,7 +9,7 @@ public class GatewayXmlTests
     // Modelo enviado pelo Daniel, sem comentários e com valores fictícios (a merchantKey real nunca vai para o repo).
     const string Modelo = """
         <transaction-request><version>1.0.0</version>
-        <verification><merchantId>00000000</merchantId><merchantKey>CHAVE-DE-TESTE</merchantKey></verification>
+        <verification><merchantId>00000000</merchantId><merchantKey>CHAVE-DE-TESTE</merchantKey><environment>1</environment></verification>
         <authorize><order><reference>PEDIDO-123456</reference><totalAmount>50000</totalAmount></order>
         <payment><acquirer>1</acquirer><method>1</method><amount>50000</amount><currency>986</currency><country>BRA</country>
         <numberOfPayments>1</numberOfPayments><groupNumber>0</groupNumber><flag>mastercard</flag><cardHolder>JOSE DA SILVA</cardHolder>
@@ -20,7 +20,7 @@ public class GatewayXmlTests
         <urlReturn>https://loja.exemplo/retorno</urlReturn><fraud>false</fraud><customField/></authorize></transaction-request>
         """;
 
-    static readonly GatewayMerchant Merchant = new("00000000", "CHAVE-DE-TESTE", "1", "PADRAO", "2", false);
+    static readonly GatewayMerchant Merchant = new("00000000", "CHAVE-DE-TESTE", "1", "PADRAO", "2", false, "1");
     static readonly GatewayCard CardData = new("5555555555554444", "JOSE DA SILVA", "123", 5, 2028, "mastercard");
 
     [Fact]
@@ -52,5 +52,12 @@ public class GatewayXmlTests
     {
         var x = XElement.Parse(GatewayXml.Build(Merchant, new GatewayOrder("P1", 1000, "BRL", 1, new() { ["email"] = "a@b.com" }, null, null), CardData));
         Assert.Equal(["country", "email"], x.Element("authorize")!.Element("billing")!.Elements().Select(e => e.Name.LocalName));
+    }
+
+    [Fact]
+    public void Environment_vazio_omite_o_elemento()
+    {
+        var x = XElement.Parse(GatewayXml.Build(Merchant with { Environment = null }, new GatewayOrder("P1", 1000, "BRL", 1, null, null, null), CardData));
+        Assert.Equal(["merchantId", "merchantKey"], x.Element("verification")!.Elements().Select(e => e.Name.LocalName));
     }
 }

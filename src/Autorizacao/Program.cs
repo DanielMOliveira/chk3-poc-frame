@@ -34,7 +34,13 @@ var merchant = new GatewayMerchant(
     },
     SoftDescriptor: Env.Optional("GATEWAY_SOFT_DESCRIPTOR", "CHK3POC"),
     MethodInstallments: Env.Optional("GATEWAY_METHOD_PARCELADO", "2"),
-    SaveCreditCard: Env.Optional("GATEWAY_SAVE_CREDIT_CARD", "false") == "true");
+    SaveCreditCard: Env.Optional("GATEWAY_SAVE_CREDIT_CARD", "false") == "true",
+    Environment: Env.Optional("GATEWAY_ENVIRONMENT", "1") switch
+    {
+        "" => null,
+        var e when e.Length <= 4 && e.All(char.IsAsciiDigit) => e,
+        _ => throw new InvalidOperationException("GATEWAY_ENVIRONMENT deve ser numérico (ou vazio para omitir)"),
+    });
 var holderRx = new Regex(@"^[\p{L}\p{M} .'-]{2,60}$");
 
 builder.Services.AddHttpClient("integration", c => { c.BaseAddress = new Uri(integrationUrl); c.DefaultRequestHeaders.Add(Web.InternalKeyHeader, internalKey); c.Timeout = TimeSpan.FromSeconds(5); });
