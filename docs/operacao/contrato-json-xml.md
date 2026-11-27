@@ -11,7 +11,7 @@ Versão de 27/11/2026 (commits `13560fc`..`0ad9381`). **RASCUNHO / POC**: o XML 
 | Campo | Tipo | Obrigatório | Regra / padrão |
 |---|---|---|---|
 | `amount` | inteiro, centavos | **sim** | 1..1.000.000.000. Sem ele: 400 `valor_invalido` |
-| `orderId` | string | não | `[A-Za-z0-9._-]{1,64}`. Se faltar, a Integration gera `CHK3-<20 hex>` e devolve na resposta |
+| `orderId` | string | não | `[A-Za-z0-9]{1,50}` (desde 27/11/2026, regra 903 do Hub; antes `[A-Za-z0-9._-]{1,64}`). Se faltar, a Integration gera `CHK3<20 hex>` e devolve na resposta |
 | `currency` | string | não | só `BRL` (padrão) |
 | `installments` | inteiro | não | **máximo** de parcelas que o comprador pode escolher (1..`channels.max_installments`, padrão 12). Acima: 400 `parcelas_invalidas` (2b) |
 | `billing` | objeto | não | campos abaixo; cada um opcional |
@@ -42,7 +42,7 @@ Exemplo mínimo e completo:
 ```json
 {
   "amount": 1990,
-  "orderId": "PED-1001",
+  "orderId": "PED1001",
   "installments": 6,
   "billing": {"customerIdentity": "12345678909", "name": "Jose da Silva", "address": "Av. Paulista, 1000",
               "city": "São Paulo", "state": "SP", "postalCode": "01310100", "country": "BR",
@@ -180,3 +180,11 @@ Com o novo merchant e `acquirer=27` o Gateway passou a processar (HTTP 200, enve
 O parser lê `status` numérico como código, o `transactionId` como referência e o `responseCode` do adquirente
 (`resultado=..._codigo_4_adq_NA_real_ref_...`). Na VPS `GATEWAY_DECLINED_CODES=4` (evidência: UNAUTHORIZED).
 `GATEWAY_APPROVED_CODES` segue vazio até aparecer uma aprovação real. `tokenCard` é mascarado no log.
+
+### 6.y Códigos do Hub e cartões de teste (27/11/2026)
+
+- Tabelas de `<status>`, erros do gateway e código da operadora, com o mapeamento proposto:
+  [docs/gateway/hub-pagamentos-codigos.md](../gateway/hub-pagamentos-codigos.md).
+- Cartões de teste do HUB e sandbox e.Rede: [docs/gateway/hub-pagamentos-cartoes-teste.md](../gateway/hub-pagamentos-cartoes-teste.md).
+- `GATEWAY_DECLINED_CODES=4` da seção 6.x foi substituído pelo padrão da tabela (variáveis vazias na VPS).
+

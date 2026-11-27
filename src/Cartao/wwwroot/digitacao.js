@@ -29,7 +29,7 @@
   }
   function check() {
     const pan = digits($('pan').value), exp = $('exp').value, cvv = $('cvv').value;
-    $('pay').disabled = sent || !(pan.length >= 13 && $('name').value.trim().length >= 3 && /^\d{2}\/\d{2}$/.test(exp) && /^\d{3}$/.test(cvv));
+    $('pay').disabled = sent || !(pan.length >= 13 && $('name').value.trim().length >= 3 && /^\d{2}\/\d{2}$/.test(exp) && /^\d{3,4}$/.test(cvv));
   }
   $('pan').addEventListener('input', (e) => {
     const v = digits(e.target.value).slice(0, 16);
@@ -42,7 +42,7 @@
     if (v.length > 2) v = v.slice(0, 2) + '/' + v.slice(2);
     e.target.value = v; check();
   });
-  $('cvv').addEventListener('input', (e) => { e.target.value = digits(e.target.value).slice(0, 3); check(); });
+  $('cvv').addEventListener('input', (e) => { e.target.value = digits(e.target.value).slice(0, 4); check(); });
   $('name').addEventListener('input', check);
 
   function showError(text) { $('msg').textContent = text; $('msg').hidden = false; }

@@ -69,7 +69,7 @@ public sealed class Flow : IDisposable
         return $"{h}.{p}.{B(HMACSHA256.HashData(key, Encoding.ASCII.GetBytes(h + "." + p)))}";
     }
 
-    public static object Body(string order = "PED-T", long amount = 1000, int? installments = null, Dictionary<string, string>? campos = null) =>
+    public static object Body(string order = "PEDT", long amount = 1000, int? installments = null, Dictionary<string, string>? campos = null) =>
         new { orderId = order, amount, currency = "BRL", installments, camposAdicionais = campos ?? new() { ["origem"] = "teste" } };
 
     public async Task<HttpResponseMessage> PostSessionRaw(object body, string? key = null, string? jwt = null, string path = "/sessions")

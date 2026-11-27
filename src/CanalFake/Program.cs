@@ -46,7 +46,7 @@ app.MapGet("/", () =>
         <div class="sub">O canal cria a sessão no servidor (POST /sessions em JSON, com o token do canal) e abre o frame de pagamento. Só o valor é obrigatório.</div>
         {F("amount", "Valor total em centavos (obrigatório)", "24990", "inputmode=\"numeric\" required")}
         <div class="row2">
-          {F("orderId", "Pedido (opcional; sem ele é gerado)", "PED-1001")}
+          {F("orderId", "Pedido (opcional; sem ele é gerado)", "PED1001")}
           {F("installments", "Parcelas máximas (opcional; padrão do canal)", "", "inputmode=\"numeric\"")}
         </div>
         <details class="opt"><summary>Campos opcionais: comprador, retorno e descrição na fatura</summary>

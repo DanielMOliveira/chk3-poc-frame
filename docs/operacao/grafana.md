@@ -73,3 +73,10 @@ Painel **"Gateway: ida (passo 11) e volta (passo 12)"**, logo abaixo da linha do
 ```
 
 Só as chamadas ao Gateway real: acrescente `| destino="real"`. Screenshot: `poc-frame-docs/grafana-gateway-real-vps-2026-11-27.png`.
+
+## 27/11/2026: status/erro do Hub no painel do Gateway
+
+O painel 10 passou a mostrar, na volta, `status=<código> (<descrição>)`, `erro=<código> (<descrição>)`,
+`adquirente=<statusCode/responseCode/errorAcquirer>` e o resultado mapeado, conforme
+[docs/gateway/hub-pagamentos-codigos.md](../gateway/hub-pagamentos-codigos.md).
+

@@ -29,7 +29,7 @@ check() { # check <descrição> <esperado> <obtido>
 
 run_case() { # run_case <nome> <pan> <status esperado> [parcelas escolhidas] [parcelas máximas na criação]
   local name=$1 pan=$2 expected=$3 n=${4:-1} max=${5:-} key="smoke-$(openssl rand -hex 8)"
-  local body='{"amount":1990,"orderId":"SMOKE-'"$name"'"'"${max:+,\"installments\":$max}"',"camposAdicionais":{"origem":"smoke"}}'
+  local body='{"amount":1990,"orderId":"SMOKE'"${name//[^A-Za-z0-9]/}"'"'"${max:+,\"installments\":$max}"',"camposAdicionais":{"origem":"smoke"}}'
   echo "== Caso $name (PAN de teste ${pan:0:6}...${pan: -4}, ${n}x)"
 
   # Passos 1-4
@@ -89,8 +89,8 @@ run_case() { # run_case <nome> <pan> <status esperado> [parcelas escolhidas] [pa
 echo "== Contrato JSON mínimo"
 r=$(curl -s -w '\n%{http_code}' -X POST "$INTEGRATION/sessions" -H "Authorization: Bearer $(jwt)" -H "Idempotency-Key: smoke-$(openssl rand -hex 8)" -H 'Content-Type: application/json' -d '{"amount":1000}')
 check "só amount cria sessão" 201 "$(tail -n1 <<<"$r")"
-check "pedido gerado e máximo do canal" "CHK3- 12" "$(sed '$d' <<<"$r" | jq -r '(.orderId[0:5]) + " " + (.maxInstallments|tostring)')"
-check "sem amount recusado" "400 valor_invalido" "$(curl -s -w '\n%{http_code}' -X POST "$INTEGRATION/sessions" -H "Authorization: Bearer $(jwt)" -H "Idempotency-Key: smoke-$(openssl rand -hex 8)" -H 'Content-Type: application/json' -d '{"orderId":"SEM-VALOR"}' | { read -r j; read -r c; echo "$c $(jq -r .erro <<<"$j")"; })"
+check "pedido gerado e máximo do canal" "CHK3 24 12" "$(sed '$d' <<<"$r" | jq -r '(.orderId[0:4]) + " " + (.orderId|length|tostring) + " " + (.maxInstallments|tostring)')"
+check "sem amount recusado" "400 valor_invalido" "$(curl -s -w '\n%{http_code}' -X POST "$INTEGRATION/sessions" -H "Authorization: Bearer $(jwt)" -H "Idempotency-Key: smoke-$(openssl rand -hex 8)" -H 'Content-Type: application/json' -d '{"orderId":"SEMVALOR"}' | { read -r j; read -r c; echo "$c $(jq -r .erro <<<"$j")"; })"
 
 run_case aprova    4111111111111111 Autorizada
 run_case recusa    4000000000000002 Recusada

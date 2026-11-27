@@ -487,3 +487,12 @@ q "select event_type, attempts, last_status, last_error, delivered_at, next_atte
 - Ver no terminal: `docker compose logs --no-color --no-log-prefix autorizacao | jq -R -r 'fromjson? | select(.Category=="chk3.gateway") | .Message'`.
 - O `logs-check.sh` confere que cada transação tem ida e volta e que nenhum campo sensível do XML sai sem máscara.
 
+
+## 27/11/2026 (noite): códigos do Hub
+
+- `resultado` do passo 11-12 inclui a descrição curta do `<status>` (ex.: `_4_nao_autorizada`), o erro com descrição
+  (`_erro_037_adquirente_nao_configurado`, ou `_fora_da_tabela`) e o código do adquirente (`_adq_<código>`).
+- Linha `chk3gw` de volta ganhou `statusGateway`, `statusDescricao`, `erroDescricao`, `codigoAdquirente`, `resultado`.
+- Status não esperado na autorização (5, 6, 9, 10, 16, 22, 23 ou fora da tabela) gera aviso
+  "Gateway: status ... não esperado na autorização: Indeterminada".
+- Pedido fora de 1-50 alfanuméricos não é enviado: `Recusada_nao_enviado_pedido_invalido_903_<destino>`.

@@ -27,7 +27,7 @@ ok()   { echo "  OK   $*"; }
 fail() { echo "  FALHA $*"; FAIL=1; }
 
 run_case() { # run_case <nome> <pan> <status esperado> [parcelas escolhidas] [parcelas máximas]
-  local name=$1 pan=$2 expected=$3 n=${4:-1} max=${5:-} order="LOGS-$1-$(openssl rand -hex 4)"
+  local name=$1 pan=$2 expected=$3 n=${4:-1} max=${5:-} order="LOGS${1//[^A-Za-z0-9]/}$(openssl rand -hex 4)"
   echo "== $name (PAN de teste ${pan:0:6}...${pan: -4}, ${n}x)"
   local html tx frame pc tc snapshot status
   # Passos 1-4 pelo canal (o canal gera o correlation id e chama POST /sessions em JSON, com billing)

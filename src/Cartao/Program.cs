@@ -88,7 +88,7 @@ app.MapPost("/digitacao", async (HttpContext ctx, IHttpClientFactory http) =>
             </div>
             <div class="field">
               <label for="cvv">CVV</label>
-              <input class="input" id="cvv" inputmode="numeric" autocomplete="cc-csc" placeholder="123" maxlength="3" required>
+              <input class="input" id="cvv" inputmode="numeric" autocomplete="cc-csc" placeholder="123" maxlength="4" required>
             </div>
           </div>
           <div class="field">

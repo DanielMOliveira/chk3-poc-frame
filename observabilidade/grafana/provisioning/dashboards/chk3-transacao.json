@@ -335,7 +335,7 @@
     {
       "id": 10,
       "type": "logs",
-      "title": "Gateway: ida (passo 11) e volta (passo 12) da transação $transactionId · XML mascarado",
+      "title": "Gateway: ida (passo 11) e volta (passo 12) da transação $transactionId · status/erro do Hub com descrição, código do adquirente · XML mascarado",
       "description": "Linhas chk3gw da API Autorização. cardNumber = BIN6+****+últimos 4; CVV, validade, portador, merchantKey e dados pessoais do billing = ***. destino = mock ou real.",
       "datasource": {
         "type": "loki",
@@ -355,7 +355,7 @@
             "uid": "loki-chk3"
           },
           "queryType": "range",
-          "expr": "{project=\"chk3-poc-frame\", service=\"autorizacao\", category=\"chk3.gateway\"} |= \"$transactionId\" | json passo=\"State.passo\", direcao=\"State.direcao\", destino=\"State.destino\", status=\"State.status\", ms=\"State.duracaoMs\", ct=\"State.contentType\", xml=\"State.xml\" | line_format \"passo {{.passo}} {{.direcao}} → {{.destino}}  http={{.status}} {{.ct}} {{.ms}}ms\\n{{.xml}}\""
+          "expr": "{project=\"chk3-poc-frame\", service=\"autorizacao\", category=\"chk3.gateway\"} |= \"$transactionId\" | json passo=\"State.passo\", direcao=\"State.direcao\", destino=\"State.destino\", status=\"State.status\", ms=\"State.duracaoMs\", ct=\"State.contentType\", stg=\"State.statusGateway\", std=\"State.statusDescricao\", erro=\"State.erroGateway\", erd=\"State.erroDescricao\", adq=\"State.codigoAdquirente\", res=\"State.resultado\", xml=\"State.xml\" | line_format \"passo {{.passo}} {{.direcao}} → {{.destino}}  http={{.status}} {{.ct}} {{.ms}}ms{{ if .stg }}  status={{.stg}} ({{.std}}){{ end }}{{ if .erro }}  erro={{.erro}} ({{.erd}}){{ end }}{{ if .adq }}  adquirente={{.adq}}{{ end }}{{ if .res }}  → {{.res}}{{ end }}\\n{{.xml}}\""
         }
       ],
       "options": {

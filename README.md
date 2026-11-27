@@ -78,7 +78,8 @@ Parar:
 | `GATEWAY_API_KEY` | gerado | Chave do mock do Gateway |
 | `GATEWAY_MERCHANT_ID` / `GATEWAY_MERCHANT_KEY` | `00000000` / gerado | `<verification>` do XML do Gateway. **O valor real fica só no `.env`**, nunca no repo nem no log |
 | `GATEWAY_URL` | gateway-mock | Endpoint completo do Gateway (na VPS: o real, só no `.env`). PANs de simulação do mock sempre vão ao mock |
-| `POC_GATEWAY_TEST_PANS` | `5453010000066167` | Cartões de teste do Gateway real (os únicos que vão para `GATEWAY_URL`) |
+| `POC_GATEWAY_TEST_PANS` | os 10 do HUB ([cartões de teste](docs/gateway/hub-pagamentos-cartoes-teste.md)) | Cartões de teste do Gateway real (os únicos que vão para `GATEWAY_URL`) |
+| `GATEWAY_APPROVED_CODES` / `GATEWAY_DECLINED_CODES` | vazio = `3,7,8` / `2,4,20,21` | `<status>` do Hub aprovado/recusado ([códigos](docs/gateway/hub-pagamentos-codigos.md)); preenchido substitui o padrão |
 | `GATEWAY_REAL_TIMEOUT_MS`, `GATEWAY_CONTENT_TYPE` | `15000`, `application/xml` | Timeout e Content-Type da chamada ao Gateway real |
 | `GATEWAY_ACQUIRER` | `1` | `<acquirer>`: inteiro positivo (modelo: 1=CIELO, 20=STONE, 22=GETNET). VPS: 27 (homologação) |
 | `GATEWAY_SOFT_DESCRIPTOR` | `CHK3POC` | `<softDescriptor>` padrão (a sessão pode mandar outro) |
@@ -354,3 +355,9 @@ Para acompanhar containers, logs e transações, ver [`docs/operacao/logs-e-rast
 Na VPS o app fica em `/home/daniel/projetos/chk3-poc-frame`. O nome do projeto compose é fixo (`name: chk3-poc-frame` no `docker-compose.yml`), então mover o diretório não troca o nome dos containers nem o volume do Postgres (`chk3-poc-frame_pgdata`).
 
 O `.env` da VPS nunca é versionado. Gere com `init-env.sh` e ajuste portas e origens conforme o modo de acesso.
+
+## Hub de Pagamentos (referência)
+
+- [Códigos de retorno e mapeamento no CHK3](docs/gateway/hub-pagamentos-codigos.md)
+- [Cartões de teste](docs/gateway/hub-pagamentos-cartoes-teste.md)
+

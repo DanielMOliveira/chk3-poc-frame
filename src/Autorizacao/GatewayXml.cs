@@ -90,20 +90,29 @@ public static class GatewayXml
         var st = r.Element("status");
         if (st is null) return (null, null, null);
         if (!st.HasElements && st.Value is "approved" or "declined") return (st.Value, r.Element("code")?.Value, null); // mock
-        // Gateway real: processada = <status>N</status><message/> (ex.: 4 UNAUTHORIZED); erro = <status><code/><message/></status>.
+        // Gateway real: processada = <status>N</status><message/> (ex.: 4 UNAUTHORIZED, tabela em HubCodes);
+        // erro = <status><code>409</code><message/></status> + result/error: NUNCA mapeado (Indeterminada).
         var code = Clean(st.HasElements ? st.Element("code")?.Value : st.Value);
         var gwRef = Clean(r.Element("transactionId")?.Value, 64);
-        var status = code is null ? null
+        var status = code is null || st.HasElements ? null
             : approvedCodes?.Contains(code) == true ? "approved"
             : declinedCodes?.Contains(code) == true ? "declined" : null;
         return (status, code, gwRef);
     }
 
-    /// <summary>Erro de negócio do Gateway real: result/error/code e details (texto fixo do Gateway, até 120 caracteres, sem dígitos longos).</summary>
-    public static (string? ErrorCode, string? Details) ParseError(XDocument? d)
+    /// <summary>Resposta de erro do Gateway real (&lt;status&gt; com &lt;code&gt; dentro, ex.: 409).</summary>
+    public static bool IsErrorEnvelope(XDocument? d) => SafeXml.Unwrap(d)?.Root?.Element("status")?.HasElements == true;
+
+    /// <summary>
+    /// Erro de negócio do Gateway real: result/error/code (ou &lt;errorCode&gt; na raiz), details (texto fixo do Gateway,
+    /// até 120 caracteres, sem dígitos longos) e errorAcquirer (código bruto do adquirente no nó &lt;error&gt;).
+    /// </summary>
+    public static (string? ErrorCode, string? Details, string? ErrorAcquirer) ParseError(XDocument? d)
     {
-        var e = SafeXml.Unwrap(d)?.Root?.Element("result")?.Element("error");
-        if (e is null) return (null, null);
+        var root = SafeXml.Unwrap(d)?.Root;
+        var e = root?.Element("result")?.Element("error") ?? root?.Element("error");
+        var topCode = Clean(root?.Element("errorCode")?.Value);
+        if (e is null) return (topCode, null, null);
         var det = e.Element("details")?.Value;
         if (det is not null)
         {
@@ -112,16 +121,19 @@ public static class GatewayXml
             if (det.Length > 120) det = det[..120];
             if (det.Length == 0) det = null;
         }
-        return (Clean(e.Element("code")?.Value), det);
+        return (Clean(e.Element("code")?.Value) ?? topCode, det, Clean(e.Element("errorAcquirer")?.Value));
     }
 
     // Código/ref só com [A-Za-z0-9_-] (vai para log e para a Integration).
     static string? Clean(string? v, int max = 32) => v?.Trim() is { Length: > 0 } t && t.Length <= max && t.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_') ? t : null;
 
-    /// <summary>Retorno do adquirente na resposta processada: processors/processor/responseCode e acquirerId.</summary>
+    /// <summary>
+    /// Código bruto do adquirente na resposta processada: processors/processor/statusCode (doc do Hub) ou responseCode
+    /// (observado da E-REDE em 27/11), e acquirerId.
+    /// </summary>
     public static (string? ResponseCode, string? AcquirerId) ParseProcessor(XDocument? d)
     {
         var p = SafeXml.Unwrap(d)?.Root?.Element("processors")?.Element("processor");
-        return (Clean(p?.Element("responseCode")?.Value), Clean(p?.Element("acquirerId")?.Value));
+        return (Clean(p?.Element("statusCode")?.Value) ?? Clean(p?.Element("responseCode")?.Value), Clean(p?.Element("acquirerId")?.Value));
     }
 }

@@ -71,8 +71,10 @@ public class GatewayXmlTests
     public void Resposta_real_embrulhada_le_codigo_e_referencia_e_mapeia_pelo_env()
     {
         Assert.Equal((null, "409", null), GatewayXml.ParseResponse(Real("409", "")));                 // sem mapeamento: indeterminado
-        Assert.Equal(("approved", "0", "ABC123"), GatewayXml.ParseResponse(Real("0", "ABC123"), ["0"], ["409"]));
-        Assert.Equal(("declined", "409", null), GatewayXml.ParseResponse(Real("409", ""), ["0"], ["409"]));
+        // envelope de erro (<status><code/>) nunca é mapeado, mesmo com o código nas listas
+        Assert.Equal((null, "0", "ABC123"), GatewayXml.ParseResponse(Real("0", "ABC123"), ["0"], ["409"]));
+        Assert.Equal((null, "409", null), GatewayXml.ParseResponse(Real("409", ""), ["0"], ["409"]));
+        Assert.True(GatewayXml.IsErrorEnvelope(Real("409", "")));
         Assert.Equal(("approved", "00", null), GatewayXml.ParseResponse(XDocument.Parse("<transaction-response><status>approved</status><code>00</code></transaction-response>")));
         Assert.Equal((null, null, null), GatewayXml.ParseResponse(XDocument.Parse("<Error><Message>x</Message></Error>")));
     }
@@ -83,8 +85,8 @@ public class GatewayXmlTests
         var inner = "<transaction-response id=\"1\"><transactionId /><status><code>409</code><message>ERROR - 409</message></status>" +
             "<result><error><code>1036</code><action>409</action><details>Autenticação no gateway inválido 5453010000066167</details></error></result></transaction-response>";
         var doc = XDocument.Parse("<string xmlns=\"http://schemas.microsoft.com/2003/10/Serialization/\">" + System.Security.SecurityElement.Escape(inner) + "</string>");
-        Assert.Equal(("1036", "Autenticação no gateway inválido ***"), GatewayXml.ParseError(doc));
-        Assert.Equal((null, null), GatewayXml.ParseError(XDocument.Parse("<transaction-response><status>approved</status></transaction-response>")));
+        Assert.Equal(("1036", "Autenticação no gateway inválido ***", null), GatewayXml.ParseError(doc));
+        Assert.Equal((null, null, null), GatewayXml.ParseError(XDocument.Parse("<transaction-response><status>approved</status></transaction-response>")));
     }
 
     // Resposta processada observada (27/11, adquirente 27 E-REDE), com os dados já mascarados como no log.
@@ -106,4 +108,35 @@ public class GatewayXmlTests
         Assert.Equal(("NA", "27"), GatewayXml.ParseProcessor(doc));
         Assert.DoesNotContain("36146167", GatewayLogMask.Mask("<r><tokenCard>T702711000000036146167NHGNFKDL</tokenCard></r>"));
     }
+
+    [Fact]
+    public void Tabela_do_Hub_status_erros_e_padroes()
+    {
+        Assert.Equal("nao_autorizada", HubCodes.StatusInfo("4")!.Slug);
+        Assert.Null(HubCodes.StatusInfo("409"));
+        Assert.Equal("adquirente_nao_configurado", HubCodes.ErrorInfo("037")!.Slug);
+        Assert.Equal("xml_com_erros", HubCodes.ErrorInfo("1")!.Slug);           // "1" == "001"
+        Assert.Null(HubCodes.ErrorInfo("1036"));                                 // observado em 27/11, fora da tabela
+        Assert.Equal(["3", "7", "8"], HubCodes.Codes("", HubCodes.DefaultApproved).Order());
+        Assert.Equal(["4"], HubCodes.Codes(" 4 ", HubCodes.DefaultDeclined));    // .env substitui o padrão
+        var ap = HubCodes.Codes("", HubCodes.DefaultApproved); var de = HubCodes.Codes("", HubCodes.DefaultDeclined);
+        Assert.False(HubCodes.Unexpected("19", ap, de));                         // indeterminada esperada (Worker consulta)
+        Assert.True(HubCodes.Unexpected("6", ap, de));                           // não esperado na autorização
+        Assert.Equal(("declined", "4", "100-007-2026331-00630-200633676"), GatewayXml.ParseResponse(ProcessadaDoc(), ap, de));
+    }
+
+    static XDocument ProcessadaDoc() => XDocument.Parse("<string xmlns=\"http://schemas.microsoft.com/2003/10/Serialization/\">" + System.Security.SecurityElement.Escape(Processada) + "</string>");
+
+    [Fact]
+    public void Codigo_do_adquirente_statusCode_tem_prioridade_e_errorAcquirer_no_erro()
+    {
+        Assert.Equal(("51", "27"), GatewayXml.ParseProcessor(XDocument.Parse("<transaction-response><processors><processor><acquirerId>27</acquirerId><statusCode>51</statusCode><responseCode>NA</responseCode></processor></processors></transaction-response>")));
+        var e = XDocument.Parse("<transaction-response><status><code>409</code></status><result><error><code>025</code><errorAcquirer>N7</errorAcquirer></error></result></transaction-response>");
+        Assert.Equal(("025", null, "N7"), GatewayXml.ParseError(e));
+    }
+
+    [Theory]
+    [InlineData("CHK3A1B2C3", true)] [InlineData("HML20261127200630", true)] [InlineData("HML-1", false)] [InlineData("PED.1", false)]
+    [InlineData("", false)] [InlineData("12345678901234567890123456789012345678901234567890", true)] [InlineData("123456789012345678901234567890123456789012345678901", false)]
+    public void Pedido_ate_50_alfanumericos(string o, bool ok) => Assert.Equal(ok, HubCodes.ValidOrderId(o));
 }

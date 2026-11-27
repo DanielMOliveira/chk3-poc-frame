@@ -20,7 +20,7 @@ var gatewayKey = Env.Required("GATEWAY_API_KEY"); // chave do MOCK: só vai no h
 var gatewayContentType = Env.Optional("GATEWAY_CONTENT_TYPE", "application/xml");
 var mockTimeout = TimeSpan.FromMilliseconds(int.Parse(Env.Optional("GATEWAY_TIMEOUT_MS", "3000")));
 var realTimeout = TimeSpan.FromMilliseconds(int.Parse(Env.Optional("GATEWAY_REAL_TIMEOUT_MS", "15000")));
-string[] gatewayTestPans = Env.Optional("POC_GATEWAY_TEST_PANS", "5453010000066167").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+string[] gatewayTestPans = Env.Optional("POC_GATEWAY_TEST_PANS", HubTestPans).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 var testPansOnly = Env.Optional("POC_TEST_PANS_ONLY", "true") == "true";
 var signer = new SnapshotSigner(Env.Secret("SNAPSHOT_SIGNING_KEY"));
 // Merchant no Gateway (passo 11). Só do .env. A merchantKey nunca é logada.
@@ -42,9 +42,10 @@ var merchant = new GatewayMerchant(
         var e when e.Length <= 4 && e.All(char.IsAsciiDigit) => e,
         _ => throw new InvalidOperationException("GATEWAY_ENVIRONMENT deve ser numérico (ou vazio para omitir)"),
     });
-// Códigos de retorno do Gateway real que significam aprovado/recusado (não informados ainda: vazio = Indeterminada).
-var approvedCodes = Env.Optional("GATEWAY_APPROVED_CODES", "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
-var declinedCodes = Env.Optional("GATEWAY_DECLINED_CODES", "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+// <status> do Hub que significa aprovado/recusado. Padrão: docs/gateway/hub-pagamentos-codigos.md (aprovada 3,7,8; recusada 2,4,20,21).
+// GATEWAY_APPROVED_CODES / GATEWAY_DECLINED_CODES preenchidos substituem o padrão. Demais: Indeterminada.
+var approvedCodes = HubCodes.Codes(Env.Optional("GATEWAY_APPROVED_CODES", ""), HubCodes.DefaultApproved);
+var declinedCodes = HubCodes.Codes(Env.Optional("GATEWAY_DECLINED_CODES", ""), HubCodes.DefaultDeclined);
 var holderRx = new Regex(@"^[\p{L}\p{M} .'-]{2,60}$");
 
 builder.Services.AddHttpClient("integration", c => { c.BaseAddress = new Uri(integrationUrl); c.DefaultRequestHeaders.Add(Web.InternalKeyHeader, internalKey); c.Timeout = TimeSpan.FromSeconds(5); });
@@ -80,7 +81,9 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     var now = DateTime.UtcNow;
     bool expOk = req.ExpMonth is >= 1 and <= 12 && req.ExpYear is >= 2000 and <= 2099
                  && new DateTime(req.ExpYear, req.ExpMonth, 1).AddMonths(1) > now;
-    bool cvvOk = req.Cvv is { Length: 3 } && req.Cvv.All(char.IsAsciiDigit);
+    // CVV: 3 dígitos (Amex 4). Cartões de teste do Gateway: 2 a 4 (o Visa e.Rede do HUB foi informado com CVV 11).
+    bool cvvOk = req.Cvv is { Length: >= 2 and <= 4 } cv && cv.All(char.IsAsciiDigit)
+                 && (cv.Length == 3 || (cv.Length == 4 && brand == "amex") || gatewayTestPans.Contains(pan));
     if (brand is null || !expOk || !cvvOk) { pan = null; return Invalid("cartao_invalido"); }        // 9a
     if (!snap.Brands.Contains(brand)) { pan = null; return Invalid("bandeira_nao_aceita"); }        // 9a
     if (req.Installments < 1 || req.Installments > snap.MaxInstallments) { pan = null; return Invalid("parcelas_invalidas"); } // 1..máximo da sessão
@@ -116,10 +119,20 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
 
     // ---- Passos 11 e 12: autorização no Gateway com valor do servidor. Timeout -> indeterminado, sem reenvio ----
     string result; string? code = null; int? gwStatus = null; string formato = "-"; string? gatewayRef = null; string? erroGateway = null; string? detalheGateway = null; string? respAdquirente = null;
+    string? statusSlug = null; string? erroSlug = null;
     var toMock = mockPans.Contains(pan) || gatewayUrl == mockUrl;
     var target = toMock ? mockUrl : gatewayUrl;
     var destino = toMock ? "mock" : "real";
     var t11 = System.Diagnostics.Stopwatch.GetTimestamp();
+    // Erro 903 do Hub: pedido com até 50 alfanuméricos. Pedido fora disso não é enviado (nada é cobrado): Recusada.
+    if (!HubCodes.ValidOrderId(attempt.OrderId))
+    {
+        pan = null;
+        result = "Recusada"; code = "CHK3_903";
+        GwLog("12", "volta", null, "nao_enviado:pedido_invalido_903", 0);
+        Chk3Trace.Step(ctx, "11-12", txId, $"Recusada_nao_enviado_pedido_invalido_903_{destino}", null, 0, attempt.LocalRef);
+        return await Register();
+    }
     try
     {
         using var cts = new CancellationTokenSource(toMock ? mockTimeout : realTimeout);
@@ -141,8 +154,17 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
         var gw = gwResp.IsSuccessStatusCode ? GatewayXml.ParseResponse(doc, approvedCodes, declinedCodes) : (null, null, null);
         if (SafeXml.Unwrap(doc)?.Root?.Name.LocalName is { } innerRoot) formato = innerRoot;
         gatewayRef = gw.GatewayRef;
-        (erroGateway, detalheGateway) = GatewayXml.ParseError(doc);
-        respAdquirente = GatewayXml.ParseProcessor(doc).ResponseCode;
+        string? erroAdquirente;
+        (erroGateway, detalheGateway, erroAdquirente) = GatewayXml.ParseError(doc);
+        respAdquirente = GatewayXml.ParseProcessor(doc).ResponseCode ?? erroAdquirente; // <statusCode>/<responseCode> ou <errorAcquirer>
+        var isError = GatewayXml.IsErrorEnvelope(doc);
+        var stInfo = isError || destino == "mock" ? null : HubCodes.StatusInfo(gw.Code);
+        var erInfo = HubCodes.ErrorInfo(erroGateway);
+        statusSlug = isError ? "erro_gateway" : stInfo?.Slug ?? (destino == "real" && gw.Code is not null ? "fora_da_tabela" : null);
+        erroSlug = erroGateway is null ? null : erInfo?.Slug ?? "fora_da_tabela";
+        if (destino == "real" && !isError && gw.Code is not null && HubCodes.Unexpected(gw.Code, approvedCodes, declinedCodes))
+            log.LogWarning("Gateway: status {Status} ({Descricao}) não esperado na autorização: Indeterminada. transactionId {TransactionId}",
+                gw.Code, stInfo?.Descricao ?? "fora da tabela", attempt.TransactionId);
         (result, code) = gw.Status switch
         {
             "approved" => ("Autorizada", gw.Code),
@@ -151,7 +173,8 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
             _ => ("Indeterminada", gw.Code),
         };
         GwLog("12", "volta", gwStatus, GatewayLogMask.Mask(body, merchant.MerchantKey, merchant.MerchantId), Chk3Trace.Since(t11),
-            gwResp.Content.Headers.ContentType?.MediaType, erroGateway, detalheGateway);
+            gwResp.Content.Headers.ContentType?.MediaType, erroGateway, detalheGateway,
+            isError ? "erro" : gw.Code, isError ? "Erro do gateway" : stInfo?.Descricao, erInfo?.Descricao ?? (erroGateway is null ? null : "fora da tabela"), respAdquirente, result);
     }
     catch (Exception ex) when (ex is OperationCanceledException or HttpRequestException)
     {
@@ -164,10 +187,13 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
         pan = null; // 12: descarta PAN. Limitação: string .NET imutável, a memória só é liberada pelo GC.
     }
     Chk3Trace.Step(ctx, "11-12", txId, gwStatus is null ? $"{result}_timeout_12b_{destino}"
-        : code is not null ? $"{result}_codigo_{code}{(erroGateway is null ? "" : "_erro_" + erroGateway)}{(respAdquirente is null ? "" : "_adq_" + respAdquirente)}_{destino}{(gatewayRef is null ? "" : "_ref_" + gatewayRef)}" : $"{result}_{destino}_http{gwStatus}_{formato}", gwStatus, Chk3Trace.Since(t11), attempt.LocalRef);
-    var t13 = System.Diagnostics.Stopwatch.GetTimestamp();
+        : code is not null ? $"{result}_codigo_{code}{(statusSlug is null ? "" : "_" + statusSlug)}{(erroGateway is null ? "" : "_erro_" + erroGateway + "_" + erroSlug)}{(respAdquirente is null ? "" : "_adq_" + respAdquirente)}_{destino}{(gatewayRef is null ? "" : "_ref_" + gatewayRef)}" : $"{result}_{destino}_http{gwStatus}_{formato}", gwStatus, Chk3Trace.Since(t11), attempt.LocalRef);
+    return await Register();
 
     // ---- Passo 13: resultado na Integration, sem PAN ----
+    async Task<IResult> Register()
+    {
+    var t13 = System.Diagnostics.Stopwatch.GetTimestamp();
     var registered = false;
     for (var i = 0; i < 3 && !registered; i++)
     {
@@ -188,11 +214,14 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
 
     // ---- Passo 14 ----
     return Results.Ok(new { status = result, transactionId = attempt.TransactionId });
+    }
 
     // Linha "chk3gw" para o Grafana: XML de ida/volta do Gateway, SEMPRE mascarado (GatewayLogMask).
-    void GwLog(string passo, string direcao, int? status, string xmlMascarado, long ms, string? contentType = null, string? erro = null, string? detalhe = null) =>
-        gwLog.LogInformation("chk3gw passo={passo} servico=autorizacao transactionId={transactionId} localRef={localRef} destino={destino} direcao={direcao} status={status} contentType={contentType} duracaoMs={duracaoMs} erroGateway={erroGateway} detalhe=\"{detalhe}\" xml={xml}",
-            passo, txId, attempt.LocalRef, destino, direcao, status, contentType, ms, erro, detalhe, xmlMascarado);
+    // Volta: statusGateway/statusDescricao (tabela <status>), erroDescricao (tabela de erros), codigoAdquirente (<statusCode>/<errorAcquirer>).
+    void GwLog(string passo, string direcao, int? status, string xmlMascarado, long ms, string? contentType = null, string? erro = null, string? detalhe = null,
+        string? statusGateway = null, string? statusDescricao = null, string? erroDescricao = null, string? codigoAdquirente = null, string? resultado = null) =>
+        gwLog.LogInformation("chk3gw passo={passo} servico=autorizacao transactionId={transactionId} localRef={localRef} destino={destino} direcao={direcao} status={status} contentType={contentType} duracaoMs={duracaoMs} statusGateway={statusGateway} statusDescricao=\"{statusDescricao}\" erroGateway={erroGateway} erroDescricao=\"{erroDescricao}\" codigoAdquirente={codigoAdquirente} resultado={resultado} detalhe=\"{detalhe}\" xml={xml}",
+            passo, txId, attempt.LocalRef, destino, direcao, status, contentType, ms, statusGateway, statusDescricao, erro, erroDescricao, codigoAdquirente, resultado, detalhe, xmlMascarado);
 
     // 9a: código do erro e transactionId (se o snapshot já foi verificado). Nunca dado de cartão.
     IResult Invalid(string code)
@@ -211,6 +240,13 @@ static async Task<string> ReadLimitedAsync(HttpContent c, int max, CancellationT
     int n = 0, r;
     while (n < max && (r = await s.ReadAsync(buf.AsMemory(n, max - n), ct)) > 0) n += r;
     return Encoding.UTF8.GetString(buf, 0, n);
+}
+
+partial class Program
+{
+    // Cartões de teste do Gateway CheckoutPay (HUB) em homologação (docs/gateway/hub-pagamentos-cartoes-teste.md).
+    const string HubTestPans = "4012001037141112,5453010000066167,376449047333005,6362970000457013,36490102462661,6011020000245045," +
+        "3566007770004971,5078601912345600019,4066559930861910,4761120000000148";
 }
 
 record AuthorizeRequest(string? Pan, string? HolderName, int ExpMonth, int ExpYear, string? Cvv, int Installments, string? Snapshot, string? DeviceSessionId);

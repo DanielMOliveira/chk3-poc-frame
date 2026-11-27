@@ -24,7 +24,8 @@ public sealed class PaymentExtras { public string? Billing { get; init; } public
 
 public static partial class Endpoints
 {
-    [GeneratedRegex("^[A-Za-z0-9._-]{1,64}$")] private static partial Regex OrderIdRx();
+    // Até 50 alfanuméricos, sem hífen/ponto: regra do Hub (erro 903).
+    [GeneratedRegex("^[A-Za-z0-9]{1,50}$")] private static partial Regex OrderIdRx();
     [GeneratedRegex("^[A-Za-z0-9_]{1,40}$")] private static partial Regex CampoKeyRx();
     [GeneratedRegex("^[\\x21-\\x7E]{8,128}$")] private static partial Regex IdemKeyRx();
     [GeneratedRegex("^[A-Za-z0-9_-]{1,32}$")] private static partial Regex GatewayCodeRx();
@@ -108,7 +109,7 @@ public static partial class Endpoints
         await using (var tx = await conn.BeginTransactionAsync())
         {
             // Pedido ausente: referência interna aleatória (não é o transactionId).
-            var orderId = req.OrderId ?? "CHK3-" + Guid.NewGuid().ToString("N")[..20].ToUpperInvariant();
+            var orderId = req.OrderId ?? "CHK3" + Guid.NewGuid().ToString("N")[..20].ToUpperInvariant();
             // 3c: admissão atômica por canal + chave. ON CONFLICT resolve a corrida entre réplicas.
             var created = await conn.QuerySingleOrDefaultAsync<CreatedRow>("""
                 INSERT INTO payment_sessions (transaction_id, channel_id, idempotency_key, fingerprint, order_id,

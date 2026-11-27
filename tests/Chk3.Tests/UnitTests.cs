@@ -15,7 +15,8 @@ public class UnitTests
     [InlineData("4111111111111111", "visa")]
     [InlineData("5555555555554444", "mastercard")]
     [InlineData("2221000000000009", "mastercard")]
-    [InlineData("378282246310005", null)]
+    [InlineData("378282246310005", "amex")]
+    [InlineData("9999999999999995", null)]
     public void Brand(string pan, string? brand) => Assert.Equal(brand, Card.Brand(pan));
 
     [Theory]
@@ -61,4 +62,13 @@ public class UnitTests
         Assert.Null(signer.Verify(token, now.AddMinutes(6))); // expirado
         Assert.Null(signer.Verify("lixo", now));
     }
+
+    [Theory]
+    [InlineData("4012001037141112", "visa")] [InlineData("4761120000000148", "visa")] [InlineData("5453010000066167", "mastercard")]
+    [InlineData("2223020000000005", "mastercard")] [InlineData("376449047333005", "amex")] [InlineData("6362970000457013", "elo")]
+    [InlineData("4389351648020055", "elo")] [InlineData("4514166653413658", "elo")] [InlineData("5067230000009011", "elo")]
+    [InlineData("36490102462661", "diners")] [InlineData("6011020000245045", "discover")] [InlineData("3566007770004971", "jcb")]
+    [InlineData("5078601912345600019", "aura")] [InlineData("6062825624254001", "hipercard")] [InlineData("6370950847866501", "hiper")]
+    [InlineData("4111111111111111", "visa")] [InlineData("5555555555554444", "mastercard")]
+    public void Bandeira_por_prefixo_cobre_os_cartoes_de_teste(string pan, string brand) => Assert.Equal(brand, Chk3.Shared.Card.Brand(pan));
 }

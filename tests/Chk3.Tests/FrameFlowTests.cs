@@ -16,8 +16,8 @@ public class FrameFlowTests : IDisposable
     public async Task Idempotencia_replay_mesma_sessao_com_credencial_nova_e_mesmo_ttl()
     {
         var key = Flow.NewKey();
-        var a = await f.CreateSession(Flow.Body("PED-IDEM"), key);
-        var b = await f.CreateSession(Flow.Body("PED-IDEM"), key);
+        var a = await f.CreateSession(Flow.Body("PEDIDEM"), key);
+        var b = await f.CreateSession(Flow.Body("PEDIDEM"), key);
         Assert.Equal(201, a.Status);
         Assert.Equal(200, b.Status);                         // 3b
         Assert.Equal(a.TransactionId, b.TransactionId);
@@ -31,8 +31,8 @@ public class FrameFlowTests : IDisposable
     public async Task Idempotencia_mesma_chave_conteudo_diferente_409()
     {
         var key = Flow.NewKey();
-        Assert.Equal(201, (await f.CreateSession(Flow.Body("PED-X", 1000), key)).Status);
-        using var r = await f.PostSessionRaw(Flow.Body("PED-X", 2000), key);
+        Assert.Equal(201, (await f.CreateSession(Flow.Body("PEDX", 1000), key)).Status);
+        using var r = await f.PostSessionRaw(Flow.Body("PEDX", 2000), key);
         Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);  // 3a
     }
 
@@ -40,7 +40,7 @@ public class FrameFlowTests : IDisposable
     public async Task Idempotencia_concorrente_cria_uma_unica_sessao()
     {
         var key = Flow.NewKey();
-        var all = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => f.CreateSession(Flow.Body("PED-CONC"), key)));
+        var all = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => f.CreateSession(Flow.Body("PEDCONC"), key)));
         Assert.Single(all, s => s.Status == 201);
         Assert.Single(all.Select(s => s.TransactionId).Distinct());
     }
@@ -148,11 +148,11 @@ public class FrameFlowTests : IDisposable
     {
         var s = await f.CreateSession(new { amount = 1000 });                            // só o valor
         Assert.Equal(201, s.Status);
-        using var semValor = await f.PostSessionRaw(new { orderId = "SEM-VALOR" });
+        using var semValor = await f.PostSessionRaw(new { orderId = "SEMVALOR" });
         Assert.Equal(HttpStatusCode.BadRequest, semValor.StatusCode);
         using var completo = await f.PostSessionRaw(new
         {
-            amount = 50000, orderId = "PEDIDO-123456", installments = 3, urlReturn = "https://loja.exemplo/retorno", softDescriptor = "SUALOJA",
+            amount = 50000, orderId = "PEDIDO123456", installments = 3, urlReturn = "https://loja.exemplo/retorno", softDescriptor = "SUALOJA",
             billing = new { customerIdentity = "1", name = "Jose da Silva", address = "Av. Paulista, 1000", address2 = "10 Andar", city = "São Paulo",
                 state = "SP", postalCode = "01310100", country = "BR", phone = "11999990000", email = "josesilva@email.com" },
         });

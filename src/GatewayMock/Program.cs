@@ -126,7 +126,7 @@ sealed record TransactionRequest(string Reference, int NumberOfPayments, string 
         Check(V("currency") == "986", "currency");
         Check(V("country") == "BRA", "country");
         Check(V("groupNumber") == "0", "groupNumber");
-        Check(V("flag") is "visa" or "mastercard" or "elo" or "amex", "flag");
+        Check(V("flag") is "visa" or "mastercard" or "elo" or "amex" or "diners" or "discover" or "jcb" or "aura" or "hipercard" or "hiper", "flag");
         Check(Regex.IsMatch(V("cardHolder"), @"^[\p{L}\p{M} .'-]{2,60}$"), "cardHolder");
         Check(V("cardNumber").All(char.IsAsciiDigit) && Card.Luhn(V("cardNumber")), "cardNumber");
         Check(Regex.IsMatch(V("cardSecurityCode"), "^[0-9]{3,4}$"), "cardSecurityCode");
