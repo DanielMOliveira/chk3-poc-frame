@@ -144,6 +144,40 @@ public class FrameFlowTests : IDisposable
     }
 
     [Fact]
+    public async Task Contrato_json_so_valor_obrigatorio_e_campos_opcionais_validados()
+    {
+        var s = await f.CreateSession(new { amount = 1000 });                            // só o valor
+        Assert.Equal(201, s.Status);
+        using var semValor = await f.PostSessionRaw(new { orderId = "SEM-VALOR" });
+        Assert.Equal(HttpStatusCode.BadRequest, semValor.StatusCode);
+        using var completo = await f.PostSessionRaw(new
+        {
+            amount = 50000, orderId = "PEDIDO-123456", installments = 3, urlReturn = "https://loja.exemplo/retorno", softDescriptor = "SUALOJA",
+            billing = new { customerIdentity = "1", name = "Jose da Silva", address = "Av. Paulista, 1000", address2 = "10 Andar", city = "São Paulo",
+                state = "SP", postalCode = "01310100", country = "BR", phone = "11999990000", email = "josesilva@email.com" },
+        });
+        Assert.Equal(HttpStatusCode.Created, completo.StatusCode);
+        Assert.Equal(3, (await completo.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("maxInstallments").GetInt32());
+        using var emailRuim = await f.PostSessionRaw(new { amount = 1000, billing = new { email = "x" } });
+        Assert.Equal(HttpStatusCode.BadRequest, emailRuim.StatusCode);
+        Assert.Contains("billing_email_invalido", await emailRuim.Content.ReadAsStringAsync());
+        using var panNoNome = await f.PostSessionRaw(new { amount = 1000, billing = new { address = "4111 1111 1111 1111" } });
+        Assert.Equal(HttpStatusCode.BadRequest, panNoNome.StatusCode);
+    }
+
+    [Fact]
+    public async Task Parcelas_ate_o_maximo_da_sessao_com_resto_na_primeira()
+    {
+        var (_, tc, snap) = await f.UpToStep8(body: new { amount = 1990, installments = 6 });
+        using var page = await f.Http.PostAsync(TestEnv.Cartao + "/digitacao", new FormUrlEncodedContent(new Dictionary<string, string> { ["tc"] = tc }));
+        var html = await page.Content.ReadAsStringAsync();
+        Assert.Equal(6, System.Text.RegularExpressions.Regex.Matches(html, "<option value=").Count);
+        Assert.Contains("3x de R$ 6,63 sem juros (1ª de R$ 6,64)", System.Net.WebUtility.HtmlDecode(html));
+        Assert.Equal((422, "ValidacaoFalhou"), await f.Step9(tc, snap, Approve, installments: 7));  // acima do máximo da sessão
+        Assert.Equal((200, "Autorizada"), await f.Step9(tc, snap, Approve, installments: 3));
+    }
+
+    [Fact]
     public async Task Endpoints_internos_nao_respondem_na_porta_publica()
     {
         using var r = await f.Http.PostAsync(TestEnv.Integration + "/internal/v1/payment-credential/validate", null);
@@ -200,7 +234,7 @@ public class FrameFlowTests : IDisposable
         Assert.Equal((422, "ValidacaoFalhou"), await f.Step9(tc, snap, "4111111111111112"));      // Luhn
         Assert.Equal((422, "ValidacaoFalhou"), await f.Step9(tc, snap, "4539578763621486"));      // PAN fora da allowlist de teste
         Assert.Equal((422, "ValidacaoFalhou"), await f.Step9(tc, snap, Approve, cvv: "12"));      // CVV
-        Assert.Equal((422, "ValidacaoFalhou"), await f.Step9(tc, snap, Approve, installments: 7)); // parcelas > máximo
+        Assert.Equal((422, "ValidacaoFalhou"), await f.Step9(tc, snap, Approve, installments: 13)); // parcelas > máximo do canal (12)
         Assert.Equal((200, "Autorizada"), await f.Step9(tc, snap, Approve));                      // ainda pode tentar
     }
 

@@ -6,7 +6,6 @@
   const take = (n) => { const m = document.querySelector(`meta[name="chk3-${n}"]`); const v = m ? m.content : ''; if (m) m.remove(); return v; };
   const tc = take('tc'), snapshot = take('snapshot'), parentOrigin = take('parent-origin');
   const amount = parseInt(take('amount'), 10) || 0, currency = take('currency') || 'BRL';
-  const maxInst = parseInt(take('max-installments'), 10) || 1, fixedInst = parseInt(take('fixed-installments'), 10) || 0;
   take('brands');
   const txId = take('tx'); // transactionId: vai no X-Correlation-Id (rastreio, não é segredo)
   const deviceSessionId = window.chk3DeviceSessionId || null; // opcional (passo 8)
@@ -14,12 +13,8 @@
   const post = (msg) => window.parent.postMessage(msg, parentOrigin);
   const brl = (c) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency });
 
-  // Parcelamento (exibição). O passo 10 valida contra o cadastro do canal.
+  // Parcelamento: opções 1..máximo vêm prontas do servidor (divisão padrão, resto na 1ª). O passo 10 revalida.
   const sel = $('inst');
-  for (let n = fixedInst || 1; n <= (fixedInst || maxInst); n++) {
-    sel.add(new Option(n === 1 ? `1x de ${brl(amount)}` : `${n}x de ${brl(Math.round(amount / n))}`, String(n)));
-  }
-  if (fixedInst) sel.disabled = true;
   $('pay').textContent = `Pagar ${brl(amount)}`;
 
   // Formatação e bandeira (modelo)
@@ -67,11 +62,11 @@
     const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     let status = 401, data = {};
     try {
-      // Passo 9: nunca envia valor. O nome impresso não é enviado (campo do Gateway a confirmar).
+      // Passo 9: nunca envia valor. O nome impresso vai para o <cardHolder> do Gateway (só em memória, nunca em log).
       const r = await fetch('/api/authorize', {
         method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json', 'X-Typing-Credential': tc, ...(txId ? { 'X-Correlation-Id': txId } : {}) },
-        body: JSON.stringify({ pan, expMonth: +mm, expYear: 2000 + +yy, cvv, installments: +sel.value, snapshot, deviceSessionId }),
+        body: JSON.stringify({ pan, holderName: $('name').value.trim(), expMonth: +mm, expYear: 2000 + +yy, cvv, installments: +sel.value, snapshot, deviceSessionId }),
       });
       status = r.status;
       data = await r.json().catch(() => ({}));

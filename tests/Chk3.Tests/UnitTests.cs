@@ -25,6 +25,28 @@ public class UnitTests
     [InlineData("texto livre", false)]
     public void PanPattern(string text, bool found) => Assert.Equal(found, Card.ContainsPanPattern(text));
 
+    [Theory]
+    [InlineData(1990, 3, 664, 663)]
+    [InlineData(1000, 4, 250, 250)]
+    [InlineData(50000, 12, 4174, 4166)]
+    [InlineData(1, 1, 1, 1)]
+    public void Parcelas_floor_e_resto_na_primeira(long total, int n, long first, long others)
+    {
+        Assert.Equal((first, others), Installments.Split(total, n));
+        Assert.Equal(total, first + others * (n - 1));
+    }
+
+    [Fact]
+    public void Parcelas_rotulo_e_maximo()
+    {
+        Assert.Equal("3x de R$ 6,63 sem juros (1ª de R$ 6,64)", Installments.Label(1990, 3));
+        Assert.Equal("1x de R$ 1.234,56", Installments.Label(123456, 1));
+        Assert.Equal("4x de R$ 2,50 sem juros", Installments.Label(1000, 4));
+        Assert.Equal(2, Installments.MaxFor(2, 12));   // parcela mínima de 1 centavo
+        Assert.False(Installments.IsValid(1990, 0, 6));
+        Assert.False(Installments.IsValid(1990, 7, 6));
+    }
+
     [Fact]
     public void Snapshot_assinado_rejeita_adulteracao_e_expiracao()
     {

@@ -64,8 +64,8 @@
 
     $('hdrVal').textContent = brl(sess.amountCents, sess.currency);
     $('hdrMerchant').textContent = `${sess.merchantName} · Pedido #${sess.orderId}`;
-    const max = sess.fixedInstallments || sess.maxInstallments;
-    $('m-card-ds').textContent = max > 1 ? `Crédito à vista ou parcelado em até ${max}x · ${sess.brands.join(', ')}` : `Crédito à vista · ${sess.brands.join(', ')}`;
+    const max = sess.maxInstallments;
+    $('m-card-ds').textContent = max > 1 ? `Crédito à vista ou parcelado em até ${max}x sem juros · ${sess.brands.join(', ')}` : `Crédito à vista · ${sess.brands.join(', ')}`;
     show('s-options');
   }
 

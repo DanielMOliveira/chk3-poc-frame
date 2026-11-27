@@ -40,10 +40,11 @@ public sealed class AttemptRow
 /// <summary>Camada fina de dados (Npgsql + Dapper). Só hash de credencial vai para a base.</summary>
 public sealed class Store(NpgsqlDataSource db)
 {
-    public const string SessionCols = """
+    /// <summary>Colunas da sessão. snap = de onde vem o snapshot (bandeiras, parcelas máx.): "cr" = token quente, "p" = pagamento.</summary>
+    public static string SessionCols(string snap = "p") => $"""
         p.transaction_id AS TransactionId, p.channel_id AS ChannelId, p.fingerprint AS Fingerprint,
         p.order_id AS OrderId, p.amount_cents AS AmountCents, p.currency AS Currency,
-        p.installments AS Installments, p.brands AS Brands, p.max_installments AS MaxInstallments,
+        p.installments AS Installments, {snap}.brands AS Brands, {snap}.max_installments AS MaxInstallments,
         p.state AS State, p.expires_at AS ExpiresAt, ch.display_name AS DisplayName
         """;
 
@@ -67,28 +68,28 @@ public sealed class Store(NpgsqlDataSource db)
             """, new { id });
     }
 
-    /// <summary>Valida sem consumir (passos 6, 7, 8): existe, no TTL, canal ativo, sessão sem tentativa.</summary>
+    /// <summary>Valida sem consumir (passos 6, 7, 8): token existe, no TTL, sem uso (tentativa), canal ativo, sessão aberta.
+    /// O snapshot (bandeiras, parcelas) vem do próprio token, na tabela quente.</summary>
     public async Task<SessionRow?> FindOpenSessionByCredentialAsync(string? plain, string kind)
     {
         if (string.IsNullOrEmpty(plain) || plain.Length > 128) return null;
         await using var c = await db.OpenConnectionAsync();
         return await c.QuerySingleOrDefaultAsync<SessionRow>($"""
-            SELECT {SessionCols}
-            FROM credentials cr
+            SELECT {SessionCols("cr")}
+            FROM frame_tokens cr
             JOIN payment_sessions p ON p.transaction_id = cr.transaction_id
             JOIN channels ch ON ch.id = p.channel_id AND ch.active
             WHERE cr.hash = @hash AND cr.kind = @kind
-              AND cr.expires_at > now() AND p.expires_at > now()
-              AND p.state = 'Criada'
+              AND cr.expires_at > now() AND cr.used_at IS NULL
+              AND p.expires_at > now() AND p.state = 'Criada'
               AND NOT EXISTS (SELECT 1 FROM attempts a WHERE a.transaction_id = p.transaction_id)
             """, new { hash = Hash(plain), kind });
     }
 
-    public async Task InsertCredentialAsync(Guid tx, byte[] hash, string kind, DateTime expiresAt, NpgsqlConnection? conn = null, NpgsqlTransaction? t = null)
-    {
-        const string sql = "INSERT INTO credentials(hash, transaction_id, kind, expires_at) VALUES (@hash, @tx, @kind, @expiresAt)";
-        if (conn is not null) { await conn.ExecuteAsync(sql, new { hash, tx, kind, expiresAt }, t); return; }
-        await using var c = await db.OpenConnectionAsync();
-        await c.ExecuteAsync(sql, new { hash, tx, kind, expiresAt });
-    }
+    /// <summary>Grava só o hash do token, com o snapshot mínimo do cadastro (bandeiras e parcelas máx.).</summary>
+    public static Task InsertTokenAsync(NpgsqlConnection conn, Guid tx, byte[] hash, string kind, DateTime expiresAt, string[] brands, int maxInstallments, NpgsqlTransaction? t = null) =>
+        conn.ExecuteAsync("""
+            INSERT INTO frame_tokens (hash, transaction_id, kind, expires_at, brands, max_installments)
+            VALUES (@hash, @tx, @kind, @expiresAt, @brands, @maxInstallments)
+            """, new { hash, tx, kind, expiresAt, brands, maxInstallments }, t);
 }

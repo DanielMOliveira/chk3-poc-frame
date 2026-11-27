@@ -50,6 +50,9 @@ app.MapPost("/digitacao", async (HttpContext ctx, IHttpClientFactory http) =>
     Chk3Trace.Mark(ctx, "8", v.TransactionId, "pagina_digitacao_entregue");
 
     var e = HtmlEncoder.Default;
+    // Parcelas 1..máximo da sessão, divisão padrão do cartão (floor; resto na 1ª), sem juros. O passo 10 revalida.
+    var options = string.Concat(Enumerable.Range(1, v.MaxInstallments).Select(n =>
+        $"<option value=\"{n}\">{e.Encode(Installments.Label(v.AmountCents, n))}</option>"));
     string M(string name, object? value) => $"<meta name=\"chk3-{name}\" content=\"{e.Encode(value?.ToString() ?? "")}\">";
     // Credencial e snapshot vão em <meta> lidos pelo JS e removidos do DOM. Página no-store, sem log.
     // Valor só para exibição (botão e parcelas); o passo 9 não envia valor.
@@ -61,8 +64,6 @@ app.MapPost("/digitacao", async (HttpContext ctx, IHttpClientFactory http) =>
         {{M("parent-origin", opcoesOrigin)}}
         {{M("amount", v.AmountCents)}}
         {{M("currency", v.Currency)}}
-        {{M("max-installments", v.MaxInstallments)}}
-        {{M("fixed-installments", v.FixedInstallments)}}
         {{M("brands", string.Join(",", v.Brands ?? []))}}
         {{M("tx", v.TransactionId)}}
         <title>Dados do cartão</title>
@@ -92,7 +93,7 @@ app.MapPost("/digitacao", async (HttpContext ctx, IHttpClientFactory http) =>
           </div>
           <div class="field">
             <label for="inst">Parcelamento</label>
-            <select id="inst"></select>
+            <select id="inst">{{options}}</select>
           </div>
           <div class="note-erro" id="msg" role="alert" hidden></div>
           <button class="btn" id="pay" type="submit" disabled>Pagar</button>
@@ -150,4 +151,4 @@ static string ErrorPage(string parentOrigin) => $"""
     <body><p class="note-erro">Não foi possível abrir a digitação. Volte à loja e tente de novo.</p></body></html>
     """;
 
-record TypingValidation(Guid TransactionId, string Snapshot, int? FixedInstallments, int MaxInstallments, string[]? Brands, long AmountCents, string Currency);
+record TypingValidation(Guid TransactionId, string Snapshot, int MaxInstallments, string[]? Brands, long AmountCents, string Currency);

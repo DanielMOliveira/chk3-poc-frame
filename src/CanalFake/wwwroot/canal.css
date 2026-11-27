@@ -16,3 +16,7 @@ body{min-height:100dvh;padding:24px 16px}
 .link{display:block;text-align:center;margin-top:14px;color:var(--roxo-esc);font-size:13px;font-weight:600}
 pre.note-erro{white-space:pre-wrap;word-break:break-all}
 @media (max-width:760px){.checkout{grid-template-columns:1fr}#frame{width:100%}}
+details.opt{margin:10px 0 14px;font-size:13px}
+details.opt summary{cursor:pointer;color:var(--roxo-esc);font-weight:600;margin-bottom:8px}
+pre.json{white-space:pre-wrap;word-break:break-all;font-size:11px;background:#f6f5fb;border-radius:10px;padding:10px;max-height:320px;overflow:auto}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}

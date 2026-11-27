@@ -70,7 +70,7 @@ public sealed class Flow : IDisposable
     }
 
     public static object Body(string order = "PED-T", long amount = 1000, int? installments = null, Dictionary<string, string>? campos = null) =>
-        new { orderId = order, amountCents = amount, currency = "BRL", installments, camposAdicionais = campos ?? new() { ["origem"] = "teste" } };
+        new { orderId = order, amount, currency = "BRL", installments, camposAdicionais = campos ?? new() { ["origem"] = "teste" } };
 
     public async Task<HttpResponseMessage> PostSessionRaw(object body, string? key = null, string? jwt = null, string path = "/sessions")
     {
@@ -111,7 +111,7 @@ public sealed class Flow : IDisposable
     {
         var req = new HttpRequestMessage(HttpMethod.Post, TestEnv.Cartao + "/api/authorize")
         {
-            Content = JsonContent.Create(new { pan, expMonth = 12, expYear = DateTime.UtcNow.Year + 2, cvv, installments, snapshot, deviceSessionId = "teste-device" }),
+            Content = JsonContent.Create(new { pan, holderName = "TESTE POC", expMonth = 12, expYear = DateTime.UtcNow.Year + 2, cvv, installments, snapshot, deviceSessionId = "teste-device" }),
         };
         req.Headers.Add("X-Typing-Credential", tc);
         using var r = await Http.SendAsync(req);
