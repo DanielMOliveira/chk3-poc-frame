@@ -87,7 +87,9 @@ declare -A PATTERNS=(
   ["Bearer"]='Bearer '
   ["hash hex (SHA-256)"]='[0-9A-Fa-f]{64}'
   ["nome digitado no E2E"]='TESTE POC'
-  ["XML do Gateway (<transaction-request>, cardNumber, merchantKey...)"]='transaction-request|cardNumber|cardSecurityCode|cardExpirationDate|cardHolder|merchantKey|<billing'
+  # O XML do Gateway aparece só MASCARADO (linhas chk3gw). Nenhum valor real de CVV, validade, portador ou chave.
+  ["XML do Gateway sem máscara (CVV, validade, portador, merchantKey)"]='(cardSecurityCode|cardExpirationDate)(>|\\u003E)[0-9]|(cardHolder|merchantKey)(>|\\u003E)[^*<\\]'
+  ["PAN do cartão de teste do Gateway"]='5453010000066167'
   ["dados do comprador (billing)"]="$B_NAME|$B_EMAIL|$B_ADDR|$B_PHONE|$B_DOC"
   ["URL completa do webhook"]='webhook\.site/[0-9a-f-]{8,}'
 )
@@ -95,6 +97,13 @@ for k in "${!PATTERNS[@]}"; do
   n=$(grep -cE -- "${PATTERNS[$k]}" "$LOGS" || true)
   [[ $n == 0 ]] && ok "sem $k" || fail "$k: $n linha(s) no log"
 done
+
+# XML de ida/volta do Gateway (linhas chk3gw): cartão só BIN6+****+últimos 4; demais campos sensíveis = ***.
+GWX=$(jq -R -r 'fromjson? | select(.Category=="chk3.gateway") | .State.xml // empty' "$LOGS")
+bad=$( { grep -oE '<(cardSecurityCode|cardExpirationDate|cardHolder|merchantKey|customerIdentity|name|address|address2|phone|email|postalCode)>[^<]*<' <<<"$GWX" || true; } | { grep -v '>\*\*\*<' || true; } | sed -E 's/>.*/>/' | sort -u | tr '\n' ' ' || true)
+[[ -z "$bad" ]] && ok "XML do Gateway no log: CVV, validade, portador, chave e billing pessoal = ***" || fail "XML do Gateway com campo sem máscara: $bad"
+badpan=$( { grep -oE '<cardNumber>[^<]*<' <<<"$GWX" || true; } | { grep -vE '<cardNumber>[0-9]{6}\*+[0-9]{4}<' || true; } | wc -l)
+[[ $badpan == 0 ]] && ok "XML do Gateway no log: cardNumber = BIN6+****+últimos 4" || fail "cardNumber sem máscara no log ($badpan)"
 
 echo "== transactionId em todos os serviços (linhas chk3)"
 declare -A EXPECTED=(
@@ -127,6 +136,9 @@ for tx in "${TXS[@]}"; do
   gw=$(docker compose logs --no-color --no-log-prefix --since "$SINCE" gateway-mock \
     | jq -R -r --arg tx "$tx" 'fromjson? | select(.Category=="chk3" and .State.transactionId==$tx) | .State.resultado' | head -1)
   [[ "$gw" == "xml_ok_n${NPAY[$tx]}_m${METHOD[$tx]}_"* ]] && ok "$tx gateway-mock validou o XML ($gw)" || fail "$tx gateway-mock: esperado xml_ok_n${NPAY[$tx]}_m${METHOD[$tx]}_*, obtido '${gw:-nada}'"
+  # Ida (passo 11) e volta (passo 12) do Gateway logadas mascaradas, com o transactionId.
+  gwl=$(jq -R -r --arg tx "$tx" 'fromjson? | select(.Category=="chk3.gateway" and .State.transactionId==$tx) | .State.direcao' "$LOGS" | sort -u | tr '\n' ' ')
+  [[ "$gwl" == "ida volta " ]] && ok "$tx XML do Gateway mascarado: ida e volta" || fail "$tx XML do Gateway: esperado ida e volta, achou '${gwl}'"
   wh=$(docker compose logs --no-color --no-log-prefix --since "$SINCE" worker \
     | jq -R -r --arg tx "$tx" 'fromjson? | select(.Category=="chk3" and .State.transactionId==$tx and .State.passo=="16") | "\(.State.resultado) status=\(.State.status)"' | tail -1)
   ok "$tx webhook: ${wh:-nenhum}"
