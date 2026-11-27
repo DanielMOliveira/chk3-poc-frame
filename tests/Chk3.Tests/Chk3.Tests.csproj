@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Shared\Chk3.Shared.csproj" />
+    <ProjectReference Include="..\..\src\Autorizacao\Chk3.Autorizacao.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,4 +1,7 @@
 using System.Net.Http.Json;
+using System.Text;
+using System.Text.RegularExpressions;
+using Chk3.Autorizacao;
 using Chk3.Shared;
 
 // API Autorização (CDE). Sem banco. PAN só em memória durante a requisição, nunca logado nem persistido.
@@ -13,6 +16,19 @@ var gatewayKey = Env.Required("GATEWAY_API_KEY");
 var gatewayTimeout = TimeSpan.FromMilliseconds(int.Parse(Env.Optional("GATEWAY_TIMEOUT_MS", "3000")));
 var testPansOnly = Env.Optional("POC_TEST_PANS_ONLY", "true") == "true";
 var signer = new SnapshotSigner(Env.Secret("SNAPSHOT_SIGNING_KEY"));
+// Merchant no Gateway (passo 11). Só do .env. A merchantKey nunca é logada.
+var merchant = new GatewayMerchant(
+    MerchantId: Env.Required("GATEWAY_MERCHANT_ID"),
+    MerchantKey: Env.Required("GATEWAY_MERCHANT_KEY"),
+    Acquirer: Env.Optional("GATEWAY_ACQUIRER", "1") switch
+    {
+        var a and ("1" or "20" or "22") => a, // 1 = CIELO, 20 = STONE, 22 = GETNET
+        _ => throw new InvalidOperationException("GATEWAY_ACQUIRER deve ser 1 (CIELO), 20 (STONE) ou 22 (GETNET)"),
+    },
+    SoftDescriptor: Env.Optional("GATEWAY_SOFT_DESCRIPTOR", "CHK3POC"),
+    MethodInstallments: Env.Optional("GATEWAY_METHOD_PARCELADO", "2"),
+    SaveCreditCard: Env.Optional("GATEWAY_SAVE_CREDIT_CARD", "false") == "true");
+var holderRx = new Regex(@"^[\p{L}\p{M} .'-]{2,60}$");
 
 builder.Services.AddHttpClient("integration", c => { c.BaseAddress = new Uri(integrationUrl); c.DefaultRequestHeaders.Add(Web.InternalKeyHeader, internalKey); c.Timeout = TimeSpan.FromSeconds(5); });
 builder.Services.AddHttpClient("gateway", c => { c.BaseAddress = new Uri(gatewayUrl); c.DefaultRequestHeaders.Add("X-Gateway-Key", gatewayKey); c.Timeout = Timeout.InfiniteTimeSpan; });
@@ -46,10 +62,11 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     bool cvvOk = req.Cvv is { Length: 3 } && req.Cvv.All(char.IsAsciiDigit);
     if (brand is null || !expOk || !cvvOk) { pan = null; return Invalid("cartao_invalido"); }        // 9a
     if (!snap.Brands.Contains(brand)) { pan = null; return Invalid("bandeira_nao_aceita"); }        // 9a
-    if (req.Installments < 1 || req.Installments > snap.MaxInstallments) { pan = null; return Invalid("parcelas_invalidas"); }
+    if (req.Installments < 1 || req.Installments > snap.MaxInstallments) { pan = null; return Invalid("parcelas_invalidas"); } // 1..máximo da sessão
     if (testPansOnly && !testPans.Contains(pan)) { pan = null; return Invalid("pan_nao_permitido_no_poc"); }
+    if (req.HolderName is not { } holder || !holderRx.IsMatch(holder)) { pan = null; return Invalid("nome_invalido"); } // 9a: <cardHolder>
     Chk3Trace.Step(ctx, "9", txId, "validacao_ok", null, Chk3Trace.Since(t0));
-    var deviceSessionId = req.DeviceSessionId is { Length: > 0 and <= 128 } d && d.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.') ? d : null;
+    // deviceSessionId (passo 8) chega aqui, mas o modelo de XML do Gateway não tem campo para ele: não é enviado (pendência v7 §4).
 
     // ---- Passo 10: tentativa única atômica na Integration, sem PAN ----
     var integration = http.CreateClient("integration");
@@ -82,17 +99,18 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     try
     {
         using var cts = new CancellationTokenSource(gatewayTimeout);
-        // TODO(v7 §4): campos reais do Gateway MCN e campo do deviceSessionId. Contrato abaixo é do mock.
-        using var gwResp = await http.CreateClient("gateway").PostAsJsonAsync("/poc/v1/authorize", new
-        {
-            reference = attempt.LocalRef, amountCents = attempt.AmountCents, currency = attempt.Currency,
-            installments = attempt.Installments,
-            card = new { number = pan, expMonth = req.ExpMonth, expYear = req.ExpYear, cvv = req.Cvv },
-            deviceSessionId,
-        }, cts.Token);
+        // <transaction-request> (formato do Gateway, 26/11). Só o mock recebe. O XML (PAN, CVV, merchantKey) nunca é logado.
+        var xml = GatewayXml.Build(merchant,
+            new GatewayOrder(attempt.OrderId, attempt.AmountCents, attempt.Currency, attempt.Installments, attempt.Billing, attempt.UrlReturn, attempt.SoftDescriptor),
+            new GatewayCard(pan!, holder, req.Cvv!, req.ExpMonth, req.ExpYear, brand!));
+        using var content = new StringContent(xml, Encoding.UTF8, "application/xml");
+        xml = null;
+        using var gwResp = await http.CreateClient("gateway").PostAsync("/poc/v1/authorize", content, cts.Token);
         gwStatus = (int)gwResp.StatusCode;
-        var gw = gwResp.IsSuccessStatusCode ? await gwResp.Content.ReadFromJsonAsync<GatewayResult>(cts.Token) : null;
-        (result, code) = gw?.Result switch
+        var gw = gwResp.IsSuccessStatusCode
+            ? GatewayXml.ParseResponse(await SafeXml.TryLoadAsync(await gwResp.Content.ReadAsStreamAsync(cts.Token), cts.Token))
+            : (null, null);
+        (result, code) = gw.Status switch
         {
             "approved" => ("Autorizada", gw.Code),
             "declined" => ("Recusada", gw.Code),
@@ -143,7 +161,7 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
 
 app.Run();
 
-record AuthorizeRequest(string? Pan, int ExpMonth, int ExpYear, string? Cvv, int Installments, string? Snapshot, string? DeviceSessionId);
-record Attempt(Guid TransactionId, Guid LocalRef, long AmountCents, string Currency, int Installments, string OrderId);
+record AuthorizeRequest(string? Pan, string? HolderName, int ExpMonth, int ExpYear, string? Cvv, int Installments, string? Snapshot, string? DeviceSessionId);
+record Attempt(Guid TransactionId, Guid LocalRef, long AmountCents, string Currency, int Installments, string OrderId,
+    Dictionary<string, string>? Billing, string? UrlReturn, string? SoftDescriptor);
 record KnownState(string? State);
-record GatewayResult(string? Result, string? Code);
