@@ -11,9 +11,16 @@ builder.WebHost.ConfigureKestrel(k => { k.AddServerHeader = false; k.Limits.MaxR
 
 var internalKey = Env.Required("INTERNAL_API_KEY");
 var integrationUrl = Env.Required("INTEGRATION_INTERNAL_URL").TrimEnd('/');
-var gatewayUrl = Env.Required("GATEWAY_URL").TrimEnd('/');
-var gatewayKey = Env.Required("GATEWAY_API_KEY");
-var gatewayTimeout = TimeSpan.FromMilliseconds(int.Parse(Env.Optional("GATEWAY_TIMEOUT_MS", "3000")));
+// Gateway: GATEWAY_URL é o endpoint completo (o mock ou o real). Os PANs de simulação do mock vão SEMPRE para o mock
+// (GATEWAY_MOCK_URL), para smoke/CI nunca gerarem transação no Gateway real. Só os PANs de teste do Gateway
+// (POC_GATEWAY_TEST_PANS) seguem para GATEWAY_URL.
+var gatewayUrl = new Uri(Env.Required("GATEWAY_URL"));
+var mockUrl = new Uri(Env.Optional("GATEWAY_MOCK_URL", "http://gateway-mock:8080/poc/v1/authorize"));
+var gatewayKey = Env.Required("GATEWAY_API_KEY"); // chave do MOCK: só vai no header quando o destino é o mock
+var gatewayContentType = Env.Optional("GATEWAY_CONTENT_TYPE", "application/xml");
+var mockTimeout = TimeSpan.FromMilliseconds(int.Parse(Env.Optional("GATEWAY_TIMEOUT_MS", "3000")));
+var realTimeout = TimeSpan.FromMilliseconds(int.Parse(Env.Optional("GATEWAY_REAL_TIMEOUT_MS", "15000")));
+string[] gatewayTestPans = Env.Optional("POC_GATEWAY_TEST_PANS", "5453010000066167").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 var testPansOnly = Env.Optional("POC_TEST_PANS_ONLY", "true") == "true";
 var signer = new SnapshotSigner(Env.Secret("SNAPSHOT_SIGNING_KEY"));
 // Merchant no Gateway (passo 11). Só do .env. A merchantKey nunca é logada.
@@ -31,15 +38,19 @@ var merchant = new GatewayMerchant(
 var holderRx = new Regex(@"^[\p{L}\p{M} .'-]{2,60}$");
 
 builder.Services.AddHttpClient("integration", c => { c.BaseAddress = new Uri(integrationUrl); c.DefaultRequestHeaders.Add(Web.InternalKeyHeader, internalKey); c.Timeout = TimeSpan.FromSeconds(5); });
-builder.Services.AddHttpClient("gateway", c => { c.BaseAddress = new Uri(gatewayUrl); c.DefaultRequestHeaders.Add("X-Gateway-Key", gatewayKey); c.Timeout = Timeout.InfiniteTimeSpan; });
+builder.Services.AddHttpClient("gateway", c => { c.Timeout = Timeout.InfiniteTimeSpan; });
 
 var app = builder.Build();
 app.UseChk3Trace();
 
 // Allowlist de PANs de teste (POC). PAN fora dela é recusado no 9a, nunca chega ao Gateway.
-string[] testPans = ["4111111111111111", "5555555555554444", "4000000000000002", "5105105105105100", "4000000000000119"];
+// mockPans: simulação do mock (aprova/recusa/timeout), sempre para o mock. gatewayTestPans: cartões de teste do Gateway.
+string[] mockPans = ["4111111111111111", "5555555555554444", "4000000000000002", "5105105105105100", "4000000000000119"];
+string[] testPans = [.. mockPans, .. gatewayTestPans];
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+var gwLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("chk3.gateway");
 
 app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpClientFactory http, ILogger<Program> log) =>
 {
@@ -94,39 +105,51 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     Chk3Trace.Step(ctx, "10", txId, "10c_registrada", (int)attemptResp.StatusCode, Chk3Trace.Since(t10), attempt.LocalRef, attempt.OrderId);
 
     // ---- Passos 11 e 12: autorização no Gateway com valor do servidor. Timeout -> indeterminado, sem reenvio ----
-    string result; string? code = null; int? gwStatus = null;
+    string result; string? code = null; int? gwStatus = null; string formato = "-";
+    var toMock = mockPans.Contains(pan) || gatewayUrl == mockUrl;
+    var target = toMock ? mockUrl : gatewayUrl;
+    var destino = toMock ? "mock" : "real";
     var t11 = System.Diagnostics.Stopwatch.GetTimestamp();
     try
     {
-        using var cts = new CancellationTokenSource(gatewayTimeout);
-        // <transaction-request> (formato do Gateway, 26/11). Só o mock recebe. O XML (PAN, CVV, merchantKey) nunca é logado.
+        using var cts = new CancellationTokenSource(toMock ? mockTimeout : realTimeout);
+        // <transaction-request> (formato do Gateway, 26/11). Tem PAN, CVV e merchantKey: só a versão MASCARADA vai para o log.
         var xml = GatewayXml.Build(merchant,
             new GatewayOrder(attempt.OrderId, attempt.AmountCents, attempt.Currency, attempt.Installments, attempt.Billing, attempt.UrlReturn, attempt.SoftDescriptor),
             new GatewayCard(pan!, holder, req.Cvv!, req.ExpMonth, req.ExpYear, brand!));
-        using var content = new StringContent(xml, Encoding.UTF8, "application/xml");
+        GwLog("11", "ida", null, GatewayLogMask.Mask(xml, merchant.MerchantKey), 0);
+        using var msg = new HttpRequestMessage(HttpMethod.Post, target) { Content = new StringContent(xml, Encoding.UTF8) };
+        msg.Content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(gatewayContentType);
+        if (msg.Content.Headers.ContentType.CharSet is null) msg.Content.Headers.ContentType.CharSet = "utf-8";
+        if (toMock) msg.Headers.Add("X-Gateway-Key", gatewayKey); // chave do mock nunca vai para o Gateway real
         xml = null;
-        using var gwResp = await http.CreateClient("gateway").PostAsync("/poc/v1/authorize", content, cts.Token);
+        using var gwResp = await http.CreateClient("gateway").SendAsync(msg, cts.Token);
         gwStatus = (int)gwResp.StatusCode;
-        var gw = gwResp.IsSuccessStatusCode
-            ? GatewayXml.ParseResponse(await SafeXml.TryLoadAsync(await gwResp.Content.ReadAsStreamAsync(cts.Token), cts.Token))
-            : (null, null);
+        var body = await ReadLimitedAsync(gwResp.Content, 64 * 1024, cts.Token);
+        var doc = SafeXml.TryParse(body);
+        formato = doc?.Root?.Name.LocalName ?? (string.IsNullOrWhiteSpace(body) ? "vazio" : "nao_xml");
+        GwLog("12", "volta", gwStatus, GatewayLogMask.Mask(body, merchant.MerchantKey), Chk3Trace.Since(t11),
+            gwResp.Content.Headers.ContentType?.MediaType);
+        var gw = gwResp.IsSuccessStatusCode ? GatewayXml.ParseResponse(doc) : (null, null);
         (result, code) = gw.Status switch
         {
             "approved" => ("Autorizada", gw.Code),
             "declined" => ("Recusada", gw.Code),
-            _ => ("Indeterminada", null), // resposta inesperada: não afirma resultado
+            _ => ("Indeterminada", null), // formato desconhecido ou erro HTTP: não afirma resultado (estrutura mascarada no log)
         };
     }
     catch (Exception ex) when (ex is OperationCanceledException or HttpRequestException)
     {
         result = "Indeterminada"; // 12b
+        GwLog("12", "volta", null, ex is OperationCanceledException ? "timeout" : "erro_http:" + ex.GetType().Name, Chk3Trace.Since(t11));
         log.LogWarning("Gateway sem resposta no prazo para localRef {LocalRef} transactionId {TransactionId}", attempt.LocalRef, attempt.TransactionId);
     }
     finally
     {
         pan = null; // 12: descarta PAN. Limitação: string .NET imutável, a memória só é liberada pelo GC.
     }
-    Chk3Trace.Step(ctx, "11-12", txId, gwStatus is null ? $"{result}_timeout_12b" : $"{result}_codigo_{code ?? "-"}", gwStatus, Chk3Trace.Since(t11), attempt.LocalRef);
+    Chk3Trace.Step(ctx, "11-12", txId, gwStatus is null ? $"{result}_timeout_12b_{destino}"
+        : code is not null ? $"{result}_codigo_{code}_{destino}" : $"{result}_{destino}_http{gwStatus}_{formato}", gwStatus, Chk3Trace.Since(t11), attempt.LocalRef);
     var t13 = System.Diagnostics.Stopwatch.GetTimestamp();
 
     // ---- Passo 13: resultado na Integration, sem PAN ----
@@ -151,6 +174,11 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     // ---- Passo 14 ----
     return Results.Ok(new { status = result, transactionId = attempt.TransactionId });
 
+    // Linha "chk3gw" para o Grafana: XML de ida/volta do Gateway, SEMPRE mascarado (GatewayLogMask).
+    void GwLog(string passo, string direcao, int? status, string xmlMascarado, long ms, string? contentType = null) =>
+        gwLog.LogInformation("chk3gw passo={passo} servico=autorizacao transactionId={transactionId} localRef={localRef} destino={destino} direcao={direcao} status={status} contentType={contentType} duracaoMs={duracaoMs} xml={xml}",
+            passo, txId, attempt.LocalRef, destino, direcao, status, contentType, ms, xmlMascarado);
+
     // 9a: código do erro e transactionId (se o snapshot já foi verificado). Nunca dado de cartão.
     IResult Invalid(string code)
     {
@@ -160,6 +188,15 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
 });
 
 app.Run();
+
+static async Task<string> ReadLimitedAsync(HttpContent c, int max, CancellationToken ct)
+{
+    await using var s = await c.ReadAsStreamAsync(ct);
+    var buf = new byte[max];
+    int n = 0, r;
+    while (n < max && (r = await s.ReadAsync(buf.AsMemory(n, max - n), ct)) > 0) n += r;
+    return Encoding.UTF8.GetString(buf, 0, n);
+}
 
 record AuthorizeRequest(string? Pan, string? HolderName, int ExpMonth, int ExpYear, string? Cvv, int Installments, string? Snapshot, string? DeviceSessionId);
 record Attempt(Guid TransactionId, Guid LocalRef, long AmountCents, string Currency, int Installments, string OrderId,

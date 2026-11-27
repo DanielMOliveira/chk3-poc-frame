@@ -64,6 +64,7 @@ services:
     environment:
       <<: *env
       AUTORIZACAO_URL: http://autorizacao:8080
+      GATEWAY_REAL_TIMEOUT_MS: ${GATEWAY_REAL_TIMEOUT_MS:-15000}  # espera a API Autorização por este + 5 s
     ports: ["${HOST_BIND:-127.0.0.1}:${CARTAO_HOST_PORT:-8082}:8080"]
     networks: [cde]
     depends_on: [integration, autorizacao]
@@ -73,18 +74,25 @@ services:
     build: { context: ., args: { PROJECT: Autorizacao } }
     environment:
       <<: *env
-      GATEWAY_URL: http://gateway-mock:8080
+      # Endpoint completo do Gateway. Padrão: o mock. Na VPS: o Gateway real (no .env). Os PANs de simulação do
+      # mock (4111..., 4000...0002, 4000...0119, 5555..., 5105...) vão sempre para GATEWAY_MOCK_URL (smoke/CI).
+      GATEWAY_URL: ${GATEWAY_URL:-http://gateway-mock:8080/poc/v1/authorize}
+      GATEWAY_MOCK_URL: http://gateway-mock:8080/poc/v1/authorize
+      GATEWAY_CONTENT_TYPE: ${GATEWAY_CONTENT_TYPE:-application/xml}
       GATEWAY_API_KEY: ${GATEWAY_API_KEY:?defina no .env}
       GATEWAY_TIMEOUT_MS: ${GATEWAY_TIMEOUT_MS:-3000}
+      GATEWAY_REAL_TIMEOUT_MS: ${GATEWAY_REAL_TIMEOUT_MS:-15000}
       POC_TEST_PANS_ONLY: "true"
-      # <transaction-request> do passo 11 (só para o mock). merchantKey só no .env.
+      POC_GATEWAY_TEST_PANS: ${POC_GATEWAY_TEST_PANS:-5453010000066167}
+      # <transaction-request> do passo 11. merchantKey só no .env.
       GATEWAY_MERCHANT_ID: ${GATEWAY_MERCHANT_ID:?defina no .env}
       GATEWAY_MERCHANT_KEY: ${GATEWAY_MERCHANT_KEY:?defina no .env}
       GATEWAY_ACQUIRER: ${GATEWAY_ACQUIRER:-1}
       GATEWAY_SOFT_DESCRIPTOR: ${GATEWAY_SOFT_DESCRIPTOR:-CHK3POC}
       GATEWAY_METHOD_PARCELADO: ${GATEWAY_METHOD_PARCELADO:-2}
       GATEWAY_SAVE_CREDIT_CARD: ${GATEWAY_SAVE_CREDIT_CARD:-false}
-    networks: [cde, vpn]
+    # saida: egress para o Gateway real (no v7 seria a VPN). vpn: o mock.
+    networks: [cde, vpn, saida]
 
   gateway-mock:  # Gateway MCN simulado (passos 11-12). Só alcançável pela API Autorização.
     <<: *app

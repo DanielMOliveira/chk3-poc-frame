@@ -15,7 +15,7 @@ var opcoesOrigin = Env.Required("OPCOES_PUBLIC_ORIGIN").TrimEnd('/');
 var canalOrigin = Env.Required("CANAL_PUBLIC_ORIGIN").TrimEnd('/');
 builder.Services.AddHttpClient("integration", c => { c.BaseAddress = new Uri(Env.Required("INTEGRATION_INTERNAL_URL")); c.DefaultRequestHeaders.Add(Web.InternalKeyHeader, internalKey); c.Timeout = TimeSpan.FromSeconds(5); });
 // Timeout maior que o do Gateway na API Autorização, para receber o "indeterminado" dela.
-builder.Services.AddHttpClient("autorizacao", c => { c.BaseAddress = new Uri(Env.Required("AUTORIZACAO_URL")); c.DefaultRequestHeaders.Add(Web.InternalKeyHeader, internalKey); c.Timeout = TimeSpan.FromSeconds(20); });
+builder.Services.AddHttpClient("autorizacao", c => { c.BaseAddress = new Uri(Env.Required("AUTORIZACAO_URL")); c.DefaultRequestHeaders.Add(Web.InternalKeyHeader, internalKey); c.Timeout = TimeSpan.FromMilliseconds(Math.Max(20_000, int.Parse(Env.Optional("GATEWAY_REAL_TIMEOUT_MS", "15000")) + 5_000)); });
 
 var app = builder.Build();
 app.UseChk3Trace();

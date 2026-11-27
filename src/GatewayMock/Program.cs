@@ -24,6 +24,7 @@ var testCards = new Dictionary<string, string>
 {
     ["4111111111111111"] = "approve",
     ["5555555555554444"] = "approve",
+    ["5453010000066167"] = "approve", // cartão de teste do Gateway real (modelo); no mock só aprova
     ["4000000000000002"] = "decline",
     ["5105105105105100"] = "decline",
     ["4000000000000119"] = "timeout",
