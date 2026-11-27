@@ -86,4 +86,24 @@ public class GatewayXmlTests
         Assert.Equal(("1036", "Autenticação no gateway inválido ***"), GatewayXml.ParseError(doc));
         Assert.Equal((null, null), GatewayXml.ParseError(XDocument.Parse("<transaction-response><status>approved</status></transaction-response>")));
     }
+
+    // Resposta processada observada (27/11, adquirente 27 E-REDE), com os dados já mascarados como no log.
+    const string Processada = """
+        <transaction-response id="1" versao="1.0"><transactionId>100-007-2026331-00630-200633676</transactionId>
+        <operationId>1</operationId><status>4</status><message>UNAUTHORIZED</message><log>  </log><errorCode>  </errorCode>
+        <order><reference>HML-1</reference><currency></currency><totalAmount>100</totalAmount><dateTime>2026-11-27T20:06:33+00:00</dateTime></order>
+        <processors><processor><flag>mastercard</flag><amount>100</amount><numberOfPayments>1</numberOfPayments><acquirer>E-REDE</acquirer>
+        <acquirerId>27</acquirerId><auth></auth><ref>711414668</ref><responseCode>NA</responseCode><descriptionResponse>NOT APPROVED</descriptionResponse>
+        <transactionID>100126*********57455</transactionID><tokenCard>***</tokenCard></processor></processors></transaction-response>
+        """;
+
+    [Fact]
+    public void Resposta_processada_le_status_numerico_ref_e_retorno_do_adquirente()
+    {
+        var doc = XDocument.Parse("<string xmlns=\"http://schemas.microsoft.com/2003/10/Serialization/\">" + System.Security.SecurityElement.Escape(Processada) + "</string>");
+        Assert.Equal((null, "4", "100-007-2026331-00630-200633676"), GatewayXml.ParseResponse(doc));                 // sem mapeamento
+        Assert.Equal(("declined", "4", "100-007-2026331-00630-200633676"), GatewayXml.ParseResponse(doc, [], ["4"]));  // GATEWAY_DECLINED_CODES=4
+        Assert.Equal(("NA", "27"), GatewayXml.ParseProcessor(doc));
+        Assert.DoesNotContain("36146167", GatewayLogMask.Mask("<r><tokenCard>T702711000000036146167NHGNFKDL</tokenCard></r>"));
+    }
 }

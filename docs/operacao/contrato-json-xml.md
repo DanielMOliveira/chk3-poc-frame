@@ -171,3 +171,12 @@ Máscara (`src/Autorizacao/GatewayLogMask.cs`): `cardNumber` → BIN6 + `*` + ú
 
 **27/11/2026, 20h:** `GATEWAY_ACQUIRER` aceita qualquer inteiro positivo (antes só 1/20/22); na VPS é `27`, a pedido do Daniel (o 22 deu erro 1036 "Sem Adquirente Cadastrato ou Ativo"). Erro de negócio do Gateway: `result/error/code` entra no `resultado` (`Indeterminada_codigo_409_erro_1036_real`) e `details` (texto fixo do Gateway, até 120 caracteres, sem dígitos longos) vai no campo `detalhe` da linha `chk3gw` de volta.
 
+
+### 6.x Resposta processada pelo adquirente (27/11/2026, adquirente 27)
+
+Com o novo merchant e `acquirer=27` o Gateway passou a processar (HTTP 200, envelope `<string>`):
+`<status>4</status><message>UNAUTHORIZED</message>`, `transactionId` do Gateway e `processors/processor` com
+`acquirer=E-REDE`, `acquirerId=27`, `responseCode=NA`, `descriptionResponse=NOT APPROVED`.
+O parser lê `status` numérico como código, o `transactionId` como referência e o `responseCode` do adquirente
+(`resultado=..._codigo_4_adq_NA_real_ref_...`). Na VPS `GATEWAY_DECLINED_CODES=4` (evidência: UNAUTHORIZED).
+`GATEWAY_APPROVED_CODES` segue vazio até aparecer uma aprovação real. `tokenCard` é mascarado no log.

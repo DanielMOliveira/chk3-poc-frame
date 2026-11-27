@@ -21,7 +21,7 @@ public static partial class GatewayLogMask
     [
         "cardsecuritycode", "securitycode", "cvv", "cvc", "cvv2", "cardexpirationdate", "expirationdate", "expdate", "expiry",
         "expmonth", "expyear", "cardholder", "holder", "holdername", "merchantkey", "merchantid", "key", "apikey", "password", "secret",
-        "token", "cardtoken", "customeridentity", "document", "cpf", "cnpj", "name", "address", "address2", "street",
+        "token", "cardtoken", "tokencard", "customeridentity", "document", "cpf", "cnpj", "name", "address", "address2", "street",
         "phone", "email", "postalcode", "zipcode", "birthdate",
     ];
     static readonly HashSet<string> CardNumber = ["cardnumber", "pan", "number", "cardnum", "creditcardnumber"];

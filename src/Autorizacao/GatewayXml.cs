@@ -89,9 +89,10 @@ public static class GatewayXml
         if (r?.Name.LocalName != "transaction-response") return (null, null, null);
         var st = r.Element("status");
         if (st is null) return (null, null, null);
-        if (!st.HasElements) return (st.Value is "approved" or "declined" ? st.Value : null, r.Element("code")?.Value, null); // mock
-        var code = Clean(st.Element("code")?.Value);
-        var gwRef = Clean(r.Element("transactionId")?.Value);
+        if (!st.HasElements && st.Value is "approved" or "declined") return (st.Value, r.Element("code")?.Value, null); // mock
+        // Gateway real: processada = <status>N</status><message/> (ex.: 4 UNAUTHORIZED); erro = <status><code/><message/></status>.
+        var code = Clean(st.HasElements ? st.Element("code")?.Value : st.Value);
+        var gwRef = Clean(r.Element("transactionId")?.Value, 64);
         var status = code is null ? null
             : approvedCodes?.Contains(code) == true ? "approved"
             : declinedCodes?.Contains(code) == true ? "declined" : null;
@@ -115,5 +116,12 @@ public static class GatewayXml
     }
 
     // Código/ref só com [A-Za-z0-9_-] (vai para log e para a Integration).
-    static string? Clean(string? v) => v?.Trim() is { Length: > 0 and <= 32 } t && t.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_') ? t : null;
+    static string? Clean(string? v, int max = 32) => v?.Trim() is { Length: > 0 } t && t.Length <= max && t.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_') ? t : null;
+
+    /// <summary>Retorno do adquirente na resposta processada: processors/processor/responseCode e acquirerId.</summary>
+    public static (string? ResponseCode, string? AcquirerId) ParseProcessor(XDocument? d)
+    {
+        var p = SafeXml.Unwrap(d)?.Root?.Element("processors")?.Element("processor");
+        return (Clean(p?.Element("responseCode")?.Value), Clean(p?.Element("acquirerId")?.Value));
+    }
 }

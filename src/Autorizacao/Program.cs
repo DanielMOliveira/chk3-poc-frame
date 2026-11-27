@@ -115,7 +115,7 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
     Chk3Trace.Step(ctx, "10", txId, "10c_registrada", (int)attemptResp.StatusCode, Chk3Trace.Since(t10), attempt.LocalRef, attempt.OrderId);
 
     // ---- Passos 11 e 12: autorização no Gateway com valor do servidor. Timeout -> indeterminado, sem reenvio ----
-    string result; string? code = null; int? gwStatus = null; string formato = "-"; string? gatewayRef = null; string? erroGateway = null; string? detalheGateway = null;
+    string result; string? code = null; int? gwStatus = null; string formato = "-"; string? gatewayRef = null; string? erroGateway = null; string? detalheGateway = null; string? respAdquirente = null;
     var toMock = mockPans.Contains(pan) || gatewayUrl == mockUrl;
     var target = toMock ? mockUrl : gatewayUrl;
     var destino = toMock ? "mock" : "real";
@@ -142,6 +142,7 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
         if (SafeXml.Unwrap(doc)?.Root?.Name.LocalName is { } innerRoot) formato = innerRoot;
         gatewayRef = gw.GatewayRef;
         (erroGateway, detalheGateway) = GatewayXml.ParseError(doc);
+        respAdquirente = GatewayXml.ParseProcessor(doc).ResponseCode;
         (result, code) = gw.Status switch
         {
             "approved" => ("Autorizada", gw.Code),
@@ -163,7 +164,7 @@ app.MapPost("/authorize", async (HttpContext ctx, AuthorizeRequest? req, IHttpCl
         pan = null; // 12: descarta PAN. Limitação: string .NET imutável, a memória só é liberada pelo GC.
     }
     Chk3Trace.Step(ctx, "11-12", txId, gwStatus is null ? $"{result}_timeout_12b_{destino}"
-        : code is not null ? $"{result}_codigo_{code}{(erroGateway is null ? "" : "_erro_" + erroGateway)}_{destino}{(gatewayRef is null ? "" : "_ref_" + gatewayRef)}" : $"{result}_{destino}_http{gwStatus}_{formato}", gwStatus, Chk3Trace.Since(t11), attempt.LocalRef);
+        : code is not null ? $"{result}_codigo_{code}{(erroGateway is null ? "" : "_erro_" + erroGateway)}{(respAdquirente is null ? "" : "_adq_" + respAdquirente)}_{destino}{(gatewayRef is null ? "" : "_ref_" + gatewayRef)}" : $"{result}_{destino}_http{gwStatus}_{formato}", gwStatus, Chk3Trace.Since(t11), attempt.LocalRef);
     var t13 = System.Diagnostics.Stopwatch.GetTimestamp();
 
     // ---- Passo 13: resultado na Integration, sem PAN ----
